@@ -1,0 +1,29 @@
+{
+  "name": "pdfstudio-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 9245 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:dev": "vite build --minify false --mode development"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "svelte": "^5.19.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.13",
+    "@tanstack/svelte-virtual": "^3.13.39",
+    "@wailsio/runtime": "3.0.0-beta.25",
+    "ace-builds": "^1.44.0",
+    "clsx": "^2.1.1",
+    "lucide-svelte": "^0.544.0",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^4.1.13"
+  }
+}

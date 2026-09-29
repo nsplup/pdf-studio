@@ -1,0 +1,13 @@
+# Node
+node_modules/
+frontend/dist/
+
+# Wails
+bin/
+
+# Go
+*.test
+*.out
+
+# Misc
+.DS_Store
