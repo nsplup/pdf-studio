@@ -142,26 +142,26 @@
       <div class="preview-spin"><Loader2 class="h-8 w-8 animate-spin" /></div>
     {/if}
   {:else}
-    <div class="preview-spin text-sm text-muted-foreground">预览资源未就绪，请关闭后重试</div>
+    <div class="preview-spin text-sm text-muted-foreground" draggable="false">预览资源未就绪，请关闭后重试</div>
   {/if}
 
   <div class="preview-topbar">
-    <span class="preview-title">第 {cur} / {pageCount} 页 · 滚轮缩放 · 拖拽平移</span>
+    <span class="preview-title" draggable="false">第 {cur} / {pageCount} 页 · 滚轮缩放 · 拖拽平移</span>
     <span class="flex-1"></span>
     <button class="pv-btn" title="缩小" onclick={() => zoomAt(1 / 1.2)}><ZoomOut class="h-4 w-4" /></button>
-    <span class="pv-scale">{Math.round(scale * 100)}%</span>
+    <span class="pv-scale" draggable="false">{Math.round(scale * 100)}%</span>
     <button class="pv-btn" title="放大" onclick={() => zoomAt(1.2)}><ZoomIn class="h-4 w-4" /></button>
     <button class="pv-btn" title="重置视图" onclick={resetView}><RotateCcw class="h-4 w-4" /></button>
     <button class="pv-btn" title="关闭 (Esc)" onclick={onClose}><X class="h-4 w-4" /></button>
   </div>
 
   {#if cur > 1}
-    <button class="preview-nav preview-prev" title="上一页 (←)" onclick={() => go(-1)}>
+    <button class="preview-nav preview-prev" title="上一页" onclick={() => go(-1)}>
       <ChevronLeft class="h-6 w-6" />
     </button>
   {/if}
   {#if cur < pageCount}
-    <button class="preview-nav preview-next" title="下一页 (→)" onclick={() => go(1)}>
+    <button class="preview-nav preview-next" title="下一页" onclick={() => go(1)}>
       <ChevronRight class="h-6 w-6" />
     </button>
   {/if}
@@ -177,6 +177,7 @@
   }
   .preview-overlay:active { cursor: grabbing; }
   .preview-spin {
+    user-select: none; -webkit-user-select: none;
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     color: hsl(var(--muted-foreground));
@@ -196,8 +197,8 @@
     background: linear-gradient(rgba(0,0,0,0.55), transparent);
     color: hsl(var(--foreground));
   }
-  .preview-title { font-size: 13px; opacity: 0.85; }
-  .pv-scale { font-size: 12px; min-width: 44px; text-align: center; opacity: 0.85; }
+  .preview-title { user-select: none; -webkit-user-select: none; font-size: 13px; opacity: 0.85; }
+  .pv-scale { user-select: none; -webkit-user-select: none; font-size: 12px; min-width: 44px; text-align: center; opacity: 0.85; }
   .pv-btn {
     display: flex; align-items: center; justify-content: center;
     height: 30px; width: 30px; border-radius: 6px;

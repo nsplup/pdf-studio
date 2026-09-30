@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { DocumentService, type OutlineNode, type PageLabel } from "./bindings/services";
+  import {
+    DocumentService,
+    type OutlineNode,
+    type PageLabel,
+  } from "./bindings/services";
   import { pickPDF, pickImport, pickSavePDF } from "./lib/dialogs";
   import {
     currentDoc,
@@ -60,7 +64,6 @@
   let doc = $derived($currentDoc);
   let placing = $derived($placement.active);
 
-
   /** 打开 PDF（按路径复用全局会话） */
   async function openFile() {
     tab = "thumbs"; // 页面类操作回到缩略图视图
@@ -87,14 +90,20 @@
     if (cur === null) return; // 拉取中
     if (d.pageRes && d.pageRes.length === d.pageCount) {
       setPageRes(d.id, d.pageRes);
-      setPageDims(d.id, d.pages.map((p) => ({ ...p })));
+      setPageDims(
+        d.id,
+        d.pages.map((p) => ({ ...p })),
+      );
       return;
     }
     setPageRes(d.id, null);
     try {
       const res = await DocumentService.PageResources(d.id);
       setPageRes(d.id, res);
-      setPageDims(d.id, d.pages.map((p) => ({ ...p })));
+      setPageDims(
+        d.id,
+        d.pages.map((p) => ({ ...p })),
+      );
     } catch (e: any) {
       setPageRes(d.id, undefined);
       notify("err", `缩略图加载失败：${e?.message ?? e}`);
@@ -113,7 +122,8 @@
     for (const seg of pages.split(",")) {
       if (seg.includes("-")) {
         const [a, b] = seg.split("-").map(Number);
-        if (Number.isFinite(a) && Number.isFinite(b)) for (let i = a; i <= b; i++) out.push(i);
+        if (Number.isFinite(a) && Number.isFinite(b))
+          for (let i = a; i <= b; i++) out.push(i);
       } else {
         const n = Number(seg);
         if (Number.isFinite(n)) out.push(n);
@@ -140,7 +150,10 @@
         res: res?.res ?? [],
         dims: res?.dims ?? [],
       });
-      notify("info", "请将鼠标悬停到缩略图上，点击两侧 ⊕ 放置导入内容，Esc 取消");
+      notify(
+        "info",
+        "请将鼠标悬停到缩略图上，点击两侧 ⊕ 放置导入内容，Esc 取消",
+      );
     } catch (e: any) {
       notify("err", `导入失败：${e?.message ?? e}`);
     } finally {
@@ -152,7 +165,10 @@
     if (!doc) return;
     const problems = outlineTab?.validate() ?? [];
     if (problems.length) {
-      notify("err", `书签校验未通过（${problems.length} 项），见书签页「日志」`);
+      notify(
+        "err",
+        `书签校验未通过（${problems.length} 项），见书签页「日志」`,
+      );
       tab = "outline";
       return;
     }
@@ -172,11 +188,17 @@
     if (!doc) return;
     const problems = outlineTab?.validate() ?? [];
     if (problems.length) {
-      notify("err", `书签校验未通过（${problems.length} 项），见书签页「日志」`);
+      notify(
+        "err",
+        `书签校验未通过（${problems.length} 项），见书签页「日志」`,
+      );
       tab = "outline";
       return;
     }
-    const out = await pickSavePDF(doc.fileName.replace(/\.pdf$/i, "") + "-副本.pdf", "另存为");
+    const out = await pickSavePDF(
+      doc.fileName.replace(/\.pdf$/i, "") + "-副本.pdf",
+      "另存为",
+    );
     if (!out) return;
     busy = true;
     try {
@@ -215,7 +237,10 @@
     tab = "thumbs"; // 页面类操作回到缩略图视图
     selected = new Set(); // 空白页放置期间临时清空选中
     startPlacement("blank", null);
-    notify("info", "请将鼠标悬停到缩略图上，点击两侧 ⊕ 选择空白页插入位置，Esc 取消");
+    notify(
+      "info",
+      "请将鼠标悬停到缩略图上，点击两侧 ⊕ 选择空白页插入位置，Esc 取消",
+    );
   }
 
   /** 「移动到」开始（由 ThumbGrid 右键菜单触发） */
@@ -233,51 +258,85 @@
     busy = true;
     try {
       if ($placement.kind === "move") {
-        // 纯前端移动：摘除选中块并插入目标位置，保持选中
         const selPages = [...selected].sort((a, b) => a - b);
         const selSet = new Set(selPages);
         const moved = selPages.map((n) => res[n - 1]);
         const movedDims = selPages.map((n) => dims[n - 1]);
         const rest = res.filter((_, i) => !selSet.has(i + 1));
         const restDims = dims.filter((_, i) => !selSet.has(i + 1));
-        let insertAt = before ? atIndex : atIndex + 1;
-        for (const n of selPages) if (n < insertAt) insertAt--;
-        insertAt = Math.max(1, Math.min(insertAt, rest.length + 1));
-        replacePageRes(doc.id, [...rest.slice(0, insertAt - 1), ...moved, ...rest.slice(insertAt - 1)]);
-        replacePageDims(doc.id, [...restDims.slice(0, insertAt - 1), ...movedDims, ...restDims.slice(insertAt - 1)]);
+
+        // 目标插入位（原序列 1-based，表示“插入到该索引页之前”）
+        const anchor = before ? atIndex : atIndex + 1;
+        // 关键：比较基准固定为 anchor，不随递减变化
+        let removedBefore = 0;
+        for (const n of selPages) if (n < anchor) removedBefore++;
+        const insertAt = Math.max(
+          1,
+          Math.min(anchor - removedBefore, rest.length + 1),
+        );
+
+        replacePageRes(doc.id, [
+          ...rest.slice(0, insertAt - 1),
+          ...moved,
+          ...rest.slice(insertAt - 1),
+        ]);
+        replacePageDims(doc.id, [
+          ...restDims.slice(0, insertAt - 1),
+          ...movedDims,
+          ...restDims.slice(insertAt - 1),
+        ]);
+
         const nextSel = new Set<number>();
         for (let i = 0; i < moved.length; i++) nextSel.add(insertAt + i);
         selected = nextSel;
         stopPlacement();
-        notify("ok", `已移动 ${selPages.length} 页（保存时生效）`);
+        notify("ok", `已移动 ${selPages.length} 页`);
       } else if ($placement.kind === "blank") {
         // 空白页：尺寸 = 被点击 ⊕ 的那个页面（锚点页）的尺寸；保存时由后端生成
         const anchorIdx = Math.min(Math.max(atIndex, 1), dims.length);
-        const ad = dims[anchorIdx - 1] ?? dims[0] ?? { width: 595, height: 842 };
+        const ad = dims[anchorIdx - 1] ??
+          dims[0] ?? { width: 595, height: 842 };
         const marker = `blank-${Math.round(ad.width)}x${Math.round(ad.height)}`;
         const insertAt = before ? atIndex : atIndex + 1;
-        const next = [...res.slice(0, insertAt - 1), marker, ...res.slice(insertAt - 1)];
+        const next = [
+          ...res.slice(0, insertAt - 1),
+          marker,
+          ...res.slice(insertAt - 1),
+        ];
         replacePageRes(doc.id, next);
-        replacePageDims(doc.id, [...dims.slice(0, insertAt - 1), { ...ad }, ...dims.slice(insertAt - 1)]);
+        replacePageDims(doc.id, [
+          ...dims.slice(0, insertAt - 1),
+          { ...ad },
+          ...dims.slice(insertAt - 1),
+        ]);
         stopPlacement();
-        notify("ok", "已插入空白页（保存时生效）");
+        notify("ok", "已插入空白页");
       } else {
         // 导入放置：缓冲页资源 uuid 直接拼接
         const bres = $placement.buffer?.res ?? [];
         const bdims = $placement.buffer?.dims ?? [];
         const insertAt = before ? atIndex : atIndex + 1;
-        replacePageRes(doc.id, [...res.slice(0, insertAt - 1), ...bres, ...res.slice(insertAt - 1)]);
-        replacePageDims(
-          doc.id,
-          [...dims.slice(0, insertAt - 1), ...bdims.map((d) => ({ ...d })), ...dims.slice(insertAt - 1)]
-        );
+        replacePageRes(doc.id, [
+          ...res.slice(0, insertAt - 1),
+          ...bres,
+          ...res.slice(insertAt - 1),
+        ]);
+        replacePageDims(doc.id, [
+          ...dims.slice(0, insertAt - 1),
+          ...bdims.map((d) => ({ ...d })),
+          ...dims.slice(insertAt - 1),
+        ]);
         // 缓冲区辅助数据（书签/页标签/附件）按插入位置平移合并
-        const r = await DocumentService.AbsorbBufferAux(doc.id, atIndex, before);
+        const r = await DocumentService.AbsorbBufferAux(
+          doc.id,
+          atIndex,
+          before,
+        );
         if (r?.addedOutline?.length) outlineTab?.addNodes(r.addedOutline);
         if (r?.addedLabels?.length) labelsTab?.mergeLabels(r.addedLabels);
         if (r?.addedAttachments?.length) await attachmentsTab?.reload();
         stopPlacement();
-        notify("ok", `已放置导入内容 ${bres.length} 页（保存时生效）`);
+        notify("ok", `已放置导入内容 ${bres.length} 页`);
       }
     } finally {
       busy = false;
@@ -308,7 +367,11 @@
     <UI.Button variant="secondary" onclick={doImport} disabled={busy || !doc}>
       <FileInput class="h-4 w-4" /> 导入图片 / PDF
     </UI.Button>
-    <UI.Button variant="secondary" onclick={beginBlank} disabled={busy || !doc || placing}>
+    <UI.Button
+      variant="secondary"
+      onclick={beginBlank}
+      disabled={busy || !doc || placing}
+    >
       <FilePlus2 class="h-4 w-4" /> 插入空白页
     </UI.Button>
     <span class="flex-1"></span>
@@ -330,7 +393,9 @@
 
   <!-- 放置模式提示条 -->
   {#if placing}
-    <div class="flex h-10 shrink-0 items-center justify-center gap-3 bg-primary/15 text-sm text-foreground">
+    <div
+      class="flex h-10 shrink-0 items-center justify-center gap-3 bg-primary/15 text-sm text-foreground"
+    >
       <Move class="h-4 w-4 text-primary" />
       {#if $placement.kind === "move"}
         点击目标缩略图左右两侧的 ⊕ 插入所选 {selected.size} 页
@@ -352,6 +417,7 @@
           docID={doc.id}
           pageRes={$pageRes[doc.id] ?? null}
           {selected}
+          {busy}
           onSelectionChange={(s) => (selected = s)}
           onDelete={async (pages) => {
             if (!doc) return;
@@ -365,43 +431,65 @@
               return;
             }
             replacePageRes(doc.id, next);
-            replacePageDims(doc.id, dims.filter((_, i) => !del.has(i + 1)));
+            replacePageDims(
+              doc.id,
+              dims.filter((_, i) => !del.has(i + 1)),
+            );
             selected = new Set();
-            notify("ok", "已删除所选页面（保存时生效）");
+            notify("ok", "已删除所选页面");
           }}
-          placing={placing}
+          {placing}
           buffer={$placement.buffer}
           onPlace={handlePlace}
           onStartMove={beginMove}
           onCancelPlace={handleCancelPlace}
         />
       {:else}
-        <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+        <div
+          class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
+        >
           <FileQuestion class="h-12 w-12" />
-          <p class="text-lg">打开一个 PDF 开始编辑</p>
-          <p class="text-sm">所有处理均在本地离线完成</p>
+          <p class="text-lg">打开 PDF 开始编辑</p>
         </div>
       {/if}
     </div>
-    <div style:display={tab === "outline" ? "block" : "none"} class="h-full overflow-y-auto">
-      <OutlineTab bind:this={outlineTab} pageCount={doc ? logicalCount(doc.id, doc.pageCount) : null} />
+    <div
+      style:display={tab === "outline" ? "block" : "none"}
+      class="h-full overflow-y-auto"
+    >
+      <OutlineTab
+        bind:this={outlineTab}
+        pageCount={doc ? logicalCount(doc.id, doc.pageCount) : null}
+      />
     </div>
-    <div style:display={tab === "labels" ? "block" : "none"} class="h-full overflow-y-auto">
-      <LabelsTab bind:this={labelsTab} pageCount={doc ? logicalCount(doc.id, doc.pageCount) : null} />
+    <div
+      style:display={tab === "labels" ? "block" : "none"}
+      class="h-full overflow-y-auto"
+    >
+      <LabelsTab
+        bind:this={labelsTab}
+        pageCount={doc ? logicalCount(doc.id, doc.pageCount) : null}
+      />
     </div>
-    <div style:display={tab === "attachments" ? "block" : "none"} class="h-full overflow-y-auto">
+    <div
+      style:display={tab === "attachments" ? "block" : "none"}
+      class="h-full overflow-y-auto"
+    >
       <AttachmentsTab bind:this={attachmentsTab} />
     </div>
   </main>
 
   <!-- 底部标签页 -->
-  <footer class="flex h-12 shrink-0 items-center gap-1 border-t bg-card px-3" class:dimmed={placing}>
+  <footer
+    class="flex h-12 shrink-0 items-center gap-1 border-t bg-card px-3"
+    class:dimmed={placing}
+  >
     {#each tabs as t (t.id)}
       <button
         class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors
                {tab === t.id
-                 ? 'bg-primary/15 font-medium text-foreground'
-                 : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+          ? 'bg-primary/15 font-medium text-foreground'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
         onclick={() => (tab = t.id)}
       >
         <t.icon class="h-4 w-4 {tab === t.id ? 'text-primary' : ''}" />
@@ -409,8 +497,10 @@
       </button>
     {/each}
     {#if busy}
-      <span class="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 class="h-3.5 w-3.5 animate-spin" /> 处理中…
+      <span
+        class="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"
+      >
+        <Loader2 class="h-3.5 w-3.5 animate-spin" /> 处理中
       </span>
     {/if}
   </footer>

@@ -5,7 +5,7 @@
 
 <div class={cn("relative h-2 w-full overflow-hidden rounded-full bg-secondary", className)}>
   <div
-    class="h-full bg-primary transition-all duration-200"
+    class="h-full bg-primary"
     style="width: {Math.min(100, Math.max(0, value))}%"
   ></div>
 </div>

@@ -9,7 +9,14 @@
   import "ace-builds/src-noconflict/mode-text";
   import "ace-builds/src-noconflict/theme-tomorrow_night";
   import "ace-builds/src-noconflict/ext-searchbox"; // Ctrl+F / Ctrl+H 查找替换
-  import { currentDoc, applyDocUpdate, notify } from "../stores";
+  import {
+    currentDoc,
+    applyDocUpdate,
+    notify,
+    labelBase,
+    toViewPage,
+    fromViewPage,
+  } from "../stores";
   import * as UI from "./ui";
   import TreeNode, { type EditNode } from "./TreeNode.svelte";
   import {
@@ -30,6 +37,9 @@
   let doc = $derived($currentDoc);
   /** 校验基准：逻辑页数（含未保存的插入/删除） */
   let maxPage = $derived(pageCount ?? doc?.pageCount ?? 1);
+  /** 页标签基准页偏移（纯前端派生）：显示页码 = 实际页码 - off；编辑回写时加回 off */
+  let base = $derived($labelBase);
+  let off = $derived(base.offset);
   let loadedPath = $state("");
   let tree = $state<EditNode[]>([]);
   let busy = $state(false);
@@ -44,11 +54,14 @@
    */
   let lastMode = mode;
   let lastTreeJson = "";
+  let lastSyncOff = -1;
   $effect(() => {
     const m = mode;
+    const o = off;
     const snapshot = JSON.stringify(tree);
-    if (m !== lastMode) {
+    if (m !== lastMode || o !== lastSyncOff) {
       lastMode = m;
+      lastSyncOff = o;
       lastTreeJson = snapshot;
       textValue = serialize(tree);
       return;
@@ -89,12 +102,14 @@
     }));
   }
 
-  /** 树 -> 缩进文本（每行：层级缩进 + 标题 + TAB + 页码） */
+  /** 树 -> 缩进文本（每行：层级缩进 + 标题 + TAB + 页码）；页码按基准页偏移显示 */
   function serialize(nodes: EditNode[]): string {
     const lines: string[] = [];
     const walk = (list: EditNode[], depth: number) => {
       for (const n of list) {
-        lines.push("\t".repeat(depth) + `${n.title}\t${n.page}`);
+        lines.push(
+          "\t".repeat(depth) + `${n.title}\t${toViewPage(n.page, off)}`,
+        );
         walk(n.kids ?? [], depth + 1);
       }
     };
@@ -102,7 +117,7 @@
     return lines.join("\n");
   }
 
-  /** 缩进文本 -> 树；页码缺省/非法取 1；层级由行首 TAB 数决定 */
+  /** 缩进文本 -> 树；输入为视图页码（无零页：0 不存在），按规则换算回实际页码存储；缺省/非法取 1；层级由行首 TAB 数决定 */
   function parseText(text: string): EditNode[] {
     const root: EditNode[] = [];
     const stack: { depth: number; node: EditNode }[] = [];
@@ -112,16 +127,24 @@
       const body = raw.slice(depth);
       const ti = body.lastIndexOf("\t");
       let title = body;
-      let page = 1;
+      let page = 1; // 视图页码，缺省为基准区第 1 页
       if (ti >= 0) {
         title = body.slice(0, ti).trim() || "无标题";
         const n = parseInt(body.slice(ti + 1), 10);
-        if (Number.isFinite(n) && n >= 1) page = n;
+        // 视图页码无 0 页；换算后须为合法实际页码（≥ 1）
+        const phys = fromViewPage(n, off);
+        if (phys !== null && phys >= 1) page = n;
       } else {
         title = body.trim() || "无标题";
       }
-      const node: EditNode = { title, page, expanded: true, kids: [] };
-      while (stack.length && stack[stack.length - 1].depth >= depth) stack.pop();
+      const node: EditNode = {
+        title,
+        page: fromViewPage(page, off) ?? 1,
+        expanded: true,
+        kids: [],
+      };
+      while (stack.length && stack[stack.length - 1].depth >= depth)
+        stack.pop();
       if (stack.length) stack[stack.length - 1].node.kids.push(node);
       else root.push(node);
       stack.push({ depth, node });
@@ -145,12 +168,13 @@
   let ed: any = null;
   /** ace → 数据 更新中，抑制外部回写 */
   let aceLock = false;
-
-
+  let ro: ResizeObserver | null = null;
 
   // 离开文本模式：销毁实例（容器随 {#if} 卸载）
   $effect(() => {
     if (mode !== "text" && ed) {
+      ro?.disconnect();
+      ro = null;
       ed.destroy();
       ed = null;
     }
@@ -168,8 +192,24 @@
       showPrintMargin: false,
       fontSize: "13px",
       useWorker: false,
-      placeholder: "每行一条：缩进（TAB）表示层级，标题后跟 TAB 和页码",
     });
+    ro = new ResizeObserver(() => {
+      if (!ed || !aceEl) return;
+      // 容器真正可见（尺寸 > 0）才处理；display:none → 尺寸 0 → 直接跳过
+      if (aceEl.clientHeight === 0 || aceEl.clientWidth === 0) return;
+
+      // 把视图同步到当前数据（数据在隐藏期间可能已变过多次）
+      const next = serialize(tree);
+      if (ed.getValue() !== next) {
+        aceLock = true;
+        ed.setValue(next, 1);
+        aceLock = false;
+      }
+      // 尺寸从 0 变非 0，Ace 的字符度量缓存是旧的，必须强制重排 + 整屏重绘
+      ed.resize(true);
+      ed.renderer.updateFull(true);
+    });
+    ro.observe(aceEl);
     ed.on("change", () => {
       if (aceLock) return;
       textValue = ed.getValue();
@@ -177,15 +217,42 @@
     });
   });
 
-  // 数据 → ace 回写（树状视图/导入等外部修改；内容一致或正在编辑时零扰动）
+  // 数据 → ace 回写（树状视图/导入/基准页切换等外部修改；内容一致或正在输入时零扰动）
+  let lastWriteOff = -1;
   $effect(() => {
+    const o = off;
+    const offChanged = o !== lastWriteOff;
+    lastWriteOff = o;
     const next = serialize(tree);
+
     if (!ed || mode !== "text") return;
-    if (ed.isFocused()) return; // 输入中不回写，避免归一化打断光标
+
+    // ★ 容器不可见（display:none / 父级隐藏 / 尺寸为 0）时：
+    //   只更新数据模型，不碰 renderer，避免在 0 尺寸容器上排版产生脏缓存。
+    //   等容器可见时由 ResizeObserver 统一同步 + resize + updateFull。
+    const invisible =
+      !aceEl || aceEl.clientHeight === 0 || aceEl.clientWidth === 0;
+
+    if (invisible) {
+      if (ed.getValue() !== next) {
+        aceLock = true;
+        ed.setValue(next, 1);
+        aceLock = false;
+      }
+      return;
+    }
+
+    if (!offChanged && ed.isFocused()) return;
+
     if (ed.getValue() !== next) {
       aceLock = true;
       ed.setValue(next, 1);
       aceLock = false;
+    }
+    if (offChanged) {
+      ed.clearSelection();
+      ed.resize(true);
+      ed.renderer.updateFull(true);
     }
   });
 
@@ -201,7 +268,12 @@
     ed.session.setAnnotations(
       ps
         .filter((p) => p.order >= 0 && p.order < validLines.length)
-        .map((p) => ({ row: validLines[p.order], column: 0, text: p.detail, type: "warning" as const }))
+        .map((p) => ({
+          row: validLines[p.order],
+          column: 0,
+          text: p.detail,
+          type: "warning" as const,
+        })),
     );
   });
 
@@ -221,7 +293,10 @@
    * - 越界：页码不在 [1, maxPage] → 自身不通过；
    * - 逆序：本项页码大于后一项页码 → 前一项不通过（pdfcpu 按写入顺序校验）。
    */
-  function computeProblems(nodes: EditNode[], max: number): { problems: BookmarkProblem[]; invalid: Set<EditNode> } {
+  function computeProblems(
+    nodes: EditNode[],
+    max: number,
+  ): { problems: BookmarkProblem[]; invalid: Set<EditNode> } {
     const problems: BookmarkProblem[] = [];
     const invalid = new Set<EditNode>();
     const seq: EditNode[] = [];
@@ -233,23 +308,43 @@
     };
     walk(nodes);
     // suffixMin[i] = seq[i..] 中合法页码的最小值（「大于后续任意一项」判定）
-    const suffixMin: number[] = new Array(seq.length + 1).fill(Number.POSITIVE_INFINITY);
+    const suffixMin: number[] = new Array(seq.length + 1).fill(
+      Number.POSITIVE_INFINITY,
+    );
     for (let i = seq.length - 1; i >= 0; i--) {
       const p = Math.round(Number(seq[i].page));
-      const valid = Number.isFinite(p) && p >= 1 && p <= max ? p : Number.POSITIVE_INFINITY;
+      const valid =
+        Number.isFinite(p) && p >= 1 && p <= max ? p : Number.POSITIVE_INFINITY;
       suffixMin[i] = Math.min(valid, suffixMin[i + 1]);
     }
     for (let i = 0; i < seq.length; i++) {
       const n = seq[i];
       const p = Math.round(Number(n.page));
+      // 校验始终基于实际页码；带基准偏移时在提示中附视图页码，避免对照困惑
+      const hint =
+        off > 0 && Number.isFinite(p)
+          ? `（视图显示 ${toViewPage(p, off)}）`
+          : "";
       if (!Number.isFinite(p) || p < 1 || p > max) {
         invalid.add(n);
-        problems.push({ kind: "range", title: n.title || "(无标题)", page: p, detail: `页码 ${Number.isFinite(p) ? p : "无效"} 超出范围 [1, ${max}]`, order: i });
+        problems.push({
+          kind: "range",
+          title: n.title || "(无标题)",
+          page: p,
+          detail: `页码 ${Number.isFinite(p) ? p : "无效"}${hint} 超出范围 [1, ${max}]`,
+          order: i,
+        });
         continue;
       }
       if (p > suffixMin[i + 1]) {
         invalid.add(n);
-        problems.push({ kind: "order", title: n.title || "(无标题)", page: p, detail: `页码 ${p} 大于后续书签页码 ${suffixMin[i + 1]}（逆序）`, order: i });
+        problems.push({
+          kind: "order",
+          title: n.title || "(无标题)",
+          page: p,
+          detail: `页码 ${p}${hint} 大于后续书签页码 ${suffixMin[i + 1]}`,
+          order: i,
+        });
       }
     }
     return { problems, invalid };
@@ -260,7 +355,6 @@
   let invalidSet = $derived(validation.invalid);
 
   let showLog = $state(false);
-
 
   /** 供 App 保存前调用：返回问题列表（空 = 通过） */
   export function validate(): BookmarkProblem[] {
@@ -331,7 +425,12 @@
     }
     const idx = path[path.length - 1];
     const refPage = list[idx]?.page ?? 1;
-    list.splice(idx + offset, 0, { title: "新书签", page: refPage, expanded: true, kids: [] });
+    list.splice(idx + offset, 0, {
+      title: "新书签",
+      page: refPage,
+      expanded: true,
+      kids: [],
+    });
     tree = [...tree];
   }
 
@@ -340,7 +439,7 @@
     if (!doc) return;
     const out = await pickSaveAny(
       doc.fileName.replace(/\.pdf$/i, "") + "-书签.txt",
-      "导出书签文本"
+      "导出书签文本",
     );
     if (!out) return;
     busy = true;
@@ -356,7 +455,7 @@
 </script>
 
 {#if doc}
-  <div class="h-full px-4 py-4">
+  <div class="px-4 py-4">
     <UI.Card>
       <UI.CardHeader class="flex flex-col">
         <UI.CardTitle class="flex w-full items-center justify-between gap-2">
@@ -374,27 +473,33 @@
             </UI.TabsList>
           </UI.Tabs>
         </UI.CardTitle>
-        <p class="mt-1 text-xs text-muted-foreground">
-          更改将在顶部「保存 / 另存为」时写入 PDF
-        </p>
       </UI.CardHeader>
       <UI.CardContent>
         {#if mode === "text"}
           <div
             bind:this={aceEl}
-            class="ace-shell h-[calc(100vh-300px)] w-full overflow-hidden rounded-md border border-input"
+            class="ace-shell h-[calc(100vh-313px)] w-full overflow-hidden rounded-md border border-input"
           ></div>
           <p class="mt-2 text-xs text-muted-foreground">
-            每行：标题 + TAB + 页码；行首 TAB 数表示层级。文本与树状视图完全同步于同一份书签数据（outlines）：任一侧修改立即更新数据并反映到另一侧。
+            每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点
           </p>
         {:else if busy && !tree.length}
-          <div class="empty"><Loader2 class="h-5 w-5 animate-spin" /> 读取书签…</div>
+          <div class="empty">
+            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取书签
+          </div>
         {:else}
           <div class="tree-wrap">
             {#each tree as node, i (i)}
-              <TreeNode {node} path={[i]} {onChanged} {onRemove} {invalidSet}
+              <TreeNode
+                {node}
+                path={[i]}
+                {onChanged}
+                {onRemove}
+                {invalidSet}
+                pageOffset={off}
                 onInsertAbove={(p) => insertSibling(p, 0)}
-                onInsertBelow={(p) => insertSibling(p, 1)} />
+                onInsertBelow={(p) => insertSibling(p, 1)}
+              />
             {/each}
             {#if !tree.length}
               <div class="empty-sm">暂无书签，可在此处添加或导入后自动合并</div>
@@ -409,7 +514,7 @@
           onclick={clearTree}
           disabled={busy || !tree.length}
         >
-          <Trash2 class="h-4 w-4" /> 清空书签（待保存）
+          <Trash2 class="h-4 w-4" /> 清空书签
         </UI.Button>
         <div class="flex items-center gap-2">
           <UI.Button
@@ -420,7 +525,9 @@
             <ScrollText class="h-4 w-4" />
             日志
             {#if problems.length}
-              <span class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600">
+              <span
+                class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
+              >
                 {problems.length}
               </span>
             {/if}
@@ -434,27 +541,42 @@
   </div>
 
   {#if showLog}
-    <div class="log-overlay" role="dialog" aria-modal="true" onclick={(e) => e.target === e.currentTarget && (showLog = false)}>
+    <div
+      class="log-overlay"
+      role="dialog"
+      aria-modal="true"
+      onclick={(e) => e.target === e.currentTarget && (showLog = false)}
+    >
       <div class="log-card">
-        <div class="flex items-center justify-between border-b border-border px-4 py-3">
+        <div
+          class="flex items-center justify-between border-b border-border px-4 py-3"
+        >
           <h3 class="flex items-center gap-2 text-sm font-medium">
             <ScrollText class="h-4 w-4" /> 书签校验日志
           </h3>
-          <button class="pv-btn" onclick={() => (showLog = false)}><X class="h-4 w-4" /></button>
+          <button class="pv-btn" onclick={() => (showLog = false)}
+            ><X class="h-4 w-4" /></button
+          >
         </div>
         <div class="max-h-[50vh] overflow-y-auto px-4 py-3">
           {#if problems.length === 0}
-            <div class="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <CheckCircle2 class="h-4 w-4 text-emerald-500" /> 未检测到问题，书签可直接保存。
+            <div
+              class="flex items-center gap-2 py-6 text-sm text-muted-foreground"
+            >
+              <CheckCircle2 class="h-4 w-4 text-emerald-500" /> 未检测到问题
             </div>
           {:else}
             <ul class="flex flex-col gap-2">
               {#each problems as p, i}
                 <li class="flex items-start gap-2 px-3 py-2 text-sm">
                   {#if p.kind === "order"}
-                    <ArrowDownUp class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <ArrowDownUp
+                      class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                    />
                   {:else}
-                    <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <TriangleAlert
+                      class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                    />
                   {/if}
                   <div>
                     <div class="font-medium">{p.title}</div>
@@ -463,13 +585,12 @@
                 </li>
               {/each}
             </ul>
-            <p class="mt-3 text-xs text-muted-foreground">
-              书签页码必须落在 1–{maxPage} 且在写入顺序上不递减（pdfcpu 限制）。请修正后保存。
-            </p>
           {/if}
         </div>
         <div class="flex justify-end border-t border-border px-4 py-3">
-          <UI.Button variant="outline" onclick={() => (showLog = false)}>关闭</UI.Button>
+          <UI.Button variant="outline" onclick={() => (showLog = false)}
+            >关闭</UI.Button
+          >
         </div>
       </div>
     </div>
@@ -484,55 +605,98 @@
           </h3>
         </div>
         <div class="px-4 py-4 text-sm text-muted-foreground">
-          确定清空全部书签？（保存时不写入书签，其他修改不受影响）
+          确定清空全部书签？
         </div>
         <div class="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <UI.Button variant="outline" onclick={() => (showClearConfirm = false)}>取消</UI.Button>
-          <UI.Button variant="destructive" onclick={doClearTree}>确认清空</UI.Button>
+          <UI.Button
+            variant="outline"
+            onclick={() => (showClearConfirm = false)}>取消</UI.Button
+          >
+          <UI.Button variant="destructive" onclick={doClearTree}
+            >确认清空</UI.Button
+          >
         </div>
       </div>
     </div>
   {/if}
 {:else}
-  <div class="empty"><FileQuestion class="h-10 w-10" /> 打开 PDF 后编辑书签</div>
+        <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+          <FileQuestion class="h-12 w-12" />
+          <p class="text-lg">打开 PDF 开始编辑</p>
+        </div>
+
 {/if}
 
 <style>
   .empty {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 10px; padding: 80px 0; color: hsl(var(--muted-foreground)); font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 80px 0;
+    color: hsl(var(--muted-foreground));
+    font-size: 14px;
   }
   .empty-sm {
-    padding: 24px 0; text-align: center; font-size: 13px; color: hsl(var(--muted-foreground));
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
   }
   .tree-wrap {
-    display: flex; flex-direction: column; gap: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
   /* Ace 编辑器容器：暗色主题 + 等宽字体 + 圆角裁切 */
   .ace-shell :global(.ace_editor) {
-    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace) !important;
+    font-family: var(
+      --font-mono,
+      ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      monospace
+    ) !important;
     border-radius: 0 0 5px 5px;
   }
 
-  /* 滚动条：与外部滚动条（app.css ::-webkit-scrollbar）完全一致 */
+  /* 滚动条：与外部滚动条（app.css ::-webkit-scrollbar）保持一致的观感 */
   .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar),
   .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar) {
-    width: 9px;
-    height: 9px;
+    width: 5px;
+    height: 5px;
   }
+
   .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-track),
   .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-track) {
     background: transparent;
+    border: none;
   }
+
+  /* 滑块：去掉描边，避免 hover 时“内部高亮、外圈留底”的割裂感 */
   .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb),
   .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb) {
-    background: hsl(var(--muted));
-    border-radius: 6px;
-    border: 2px solid hsl(var(--background));
+    background: rgba(150, 152, 150, 0.28); /* #969896，tomorrow_night 注释灰 */
+    border: none;
+    border-radius: 5px;
+    background-clip: padding-box;
   }
+
   .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb:hover),
   .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb:hover) {
-    background: hsl(var(--secondary-foreground) / 0.3);
+    background: rgba(150, 152, 150, 0.48); /* 整块变亮，而不是局部 */
+  }
+
+  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb:active),
+  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb:active) {
+    background: rgba(150, 152, 150, 0.62);
+  }
+
+  /* 去掉 WebKit 默认的角落补丁背景，避免右下出现浅色方块 */
+  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-corner),
+  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-corner) {
+    background: transparent;
   }
 
   /* 警告图标：替换为高清 SVG（lucide triangle-alert） */
@@ -545,89 +709,92 @@
     background-repeat: no-repeat;
   }
   /* tooltip 内部的警告图标：脱离装订线的 2px 偏移，改为居中并垂直对齐文字 */
-:global(.ace_tooltip .ace_warning.ace_icon),
-:global(.ace_tooltip .ace_icon.ace_warning),
-:global(.ace_tooltip .ace_icon.ace_warning_fold) {
-  display: inline-block !important;
-  width: 14px !important;
-  height: 14px !important;
-  background-size: 14px 14px !important;
-  background-position: center center !important;
-  background-repeat: no-repeat !important;
-  vertical-align: -1px !important;   /* 微调基线对齐；偏上就改 -3px，偏下就改 -1px */
-  margin: 0 4px 0 0 !important;
-}
+  :global(.ace_tooltip .ace_warning.ace_icon),
+  :global(.ace_tooltip .ace_icon.ace_warning),
+  :global(.ace_tooltip .ace_icon.ace_warning_fold) {
+    display: inline-block !important;
+    width: 14px !important;
+    height: 14px !important;
+    background-size: 14px 14px !important;
+    background-position: center center !important;
+    background-repeat: no-repeat !important;
+    vertical-align: -1px !important; /* 微调基线对齐；偏上就改 -3px，偏下就改 -1px */
+    margin: 0 4px 0 0 !important;
+  }
 
-/* ========== 查找/替换面板：暗色底 + 只改按钮颜色 ========== */
+  /* ========== 查找/替换面板：暗色底 + 只改按钮颜色 ========== */
 
-/* 面板容器 */
-.ace-shell :global(.ace_search) {
-  background: #1d1f21 !important;
-  border: 1px solid #3a3d3e !important;
-  border-top: none !important;
-  color: #c5c8c6 !important;
-}
+  /* 面板容器 */
+  .ace-shell :global(.ace_search) {
+    background: #1d1f21 !important;
+    border: 1px solid #3a3d3e !important;
+    border-top: none !important;
+    color: #c5c8c6 !important;
+  }
 
-/* 输入框（查找 / 替换） */
-.ace-shell :global(.ace_search_field),
-.ace-shell :global(.ace_replace_field) {
-  background: #14161a !important;
-  border: 1px solid #3a3d3e !important;
-  color: #c5c8c6 !important;
-}
-.ace-shell :global(.ace_search_field:focus),
-.ace-shell :global(.ace_replace_field:focus) {
-  border-color: #81a2be !important;
-}
-.ace-shell :global(.ace_search_field::placeholder),
-.ace-shell :global(.ace_replace_field::placeholder) {
-  color: #6b6f73 !important;
-}
+  /* 输入框（查找 / 替换） */
+  .ace-shell :global(.ace_search_field),
+  .ace-shell :global(.ace_replace_field) {
+    background: #14161a !important;
+    border: 1px solid #3a3d3e !important;
+    color: #c5c8c6 !important;
+  }
+  .ace-shell :global(.ace_search_field:focus),
+  .ace-shell :global(.ace_replace_field:focus) {
+    border-color: #81a2be !important;
+  }
+  .ace-shell :global(.ace_search_field::placeholder),
+  .ace-shell :global(.ace_replace_field::placeholder) {
+    color: #6b6f73 !important;
+  }
 
-/* 箭头 < >、All / Replace、底部 - .* Aa \b S：只改颜色，其余不动 */
-.ace-shell :global(.ace_searchbtn),
-.ace-shell :global(.ace_replacebtn),
-.ace-shell :global(.ace_button) {
-  background-color: #2d2f31 !important;
-  border-color: #3a3d3e !important;
-  color: #c5c8c6 !important;
-}
-/* 悬停：仅对未选中的按钮生效 */
-.ace-shell :global(.ace_searchbtn:hover),
-.ace-shell :global(.ace_replacebtn:hover),
-.ace-shell :global(.ace_button:hover:not(.checked)) {
-  background-color: #3a3d3e !important;
-  color: #e8e8e8 !important;
-}
+  /* 箭头 < >、All / Replace、底部 - .* Aa \b S：只改颜色，其余不动 */
+  .ace-shell :global(.ace_searchbtn),
+  .ace-shell :global(.ace_replacebtn),
+  .ace-shell :global(.ace_button) {
+    background-color: #2d2f31 !important;
+    border-color: #3a3d3e !important;
+    color: #c5c8c6 !important;
+  }
+  /* 悬停：仅对未选中的按钮生效 */
+  .ace-shell :global(.ace_searchbtn:hover),
+  .ace-shell :global(.ace_replacebtn:hover),
+  .ace-shell :global(.ace_button:hover:not(.checked)) {
+    background-color: #3a3d3e !important;
+    color: #e8e8e8 !important;
+  }
 
-/* 选中态：用 checked */
-.ace-shell :global(.ace_button.checked),
-.ace-shell :global(.ace_search .ace_button.checked) {
-  background-color: #81a2be !important;
-  color: #1d1f21 !important;
-  border-color: #81a2be !important;
-}
+  /* 选中态：用 checked */
+  .ace-shell :global(.ace_button.checked),
+  .ace-shell :global(.ace_search .ace_button.checked) {
+    background-color: #81a2be !important;
+    color: #1d1f21 !important;
+    border-color: #81a2be !important;
+  }
 
-/* 计数文字 */
-.ace-shell :global(.ace_search_counter) {
-  color: #969896 !important;
-}
+  /* 计数文字 */
+  .ace-shell :global(.ace_search_counter) {
+    color: #969896 !important;
+  }
 
-/* 关闭按钮：唯一保留“换图标”的地方（位图 → 高清 SVG） */
-.ace-shell :global(.ace_searchbtn_close) {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c5c8c6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6 6 18'/%3E%3Cpath d='m6 6 12 12'/%3E%3C/svg%3E") !important;
-  background-position: center !important;
-  background-size: 12px 12px !important;
-  background-repeat: no-repeat !important;
-}
-.ace-shell :global(.ace_search_form.ace_nomatch) {
-  border-radius: 3px !important;
-}
-
+  /* 关闭按钮：唯一保留“换图标”的地方（位图 → 高清 SVG） */
+  .ace-shell :global(.ace_searchbtn_close) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c5c8c6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6 6 18'/%3E%3Cpath d='m6 6 12 12'/%3E%3C/svg%3E") !important;
+    background-position: center !important;
+    background-size: 12px 12px !important;
+    background-repeat: no-repeat !important;
+  }
+  .ace-shell :global(.ace_search_form.ace_nomatch) {
+    border-radius: 3px !important;
+  }
 
   .log-overlay {
-    position: fixed; inset: 0; z-index: 60;
-    display: flex; align-items: center; justify-content: center;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: rgb(0 0 0 / 0.5);
   }
   .log-card {
@@ -639,9 +806,16 @@
     box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
   }
   .pv-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
     color: hsl(var(--muted-foreground));
   }
-  .pv-btn:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+  .pv-btn:hover {
+    background: hsl(var(--accent));
+    color: hsl(var(--foreground));
+  }
 </style>

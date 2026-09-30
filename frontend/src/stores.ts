@@ -56,6 +56,36 @@ export function replacePageDims(id: string, dims: PageDim[]) {
   pageDims.update((m) => ({ ...m, [id]: dims }));
 }
 
+// ---------- 页标签基准页（纯前端派生状态，不写入 PDF） ----------
+// 基准页 = 页标签区间中被选为「基准」的区间；初始化时自动选中
+// /PageLabels 中 /S = /D（十进制）的区间。书签视图渲染页码时应用
+// 基准页的页码作为偏移量：显示页码 = 实际页码 - offset（基准页显示为
+// 该区间的起始编号）；编辑回写时加回 offset，恢复实际页码。
+
+export interface LabelBase {
+  /** 显示页码偏移量：display = phys - offset；无基准时为 0 */
+  offset: number;
+  /** 基准区间起始页（1-based 实际页码）；无基准时为 null */
+  basePage: number | null;
+}
+
+export const labelBase = writable<LabelBase>({ offset: 0, basePage: null });
+
+/**
+ * 实际页码 → 视图页码。不存在零页：基准页之前依次为 -1、-2、…（跳过 0）。
+ * 例：offset=5 时，实际第 1 页显示 -5（1 减 5 是负 5），实际第 6 页显示 1。
+ */
+export function toViewPage(phys: number, offset: number): number {
+  const d = Math.round(phys) - offset;
+  return d >= 1 ? d : d - 1;
+}
+
+/** 视图页码 → 实际页码；0 不存在（无零页），返回 null 表示非法输入 */
+export function fromViewPage(view: number, offset: number): number | null {
+  if (!Number.isFinite(view) || view === 0) return null;
+  return view >= 1 ? view + offset : view + offset + 1;
+}
+
 /** 打开文档：命中缓存直接复用（跨功能页共享，切页不丢失） */
 export async function openDocument(path: string): Promise<DocInfo> {
   const cur = get(currentDoc);

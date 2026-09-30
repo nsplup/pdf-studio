@@ -1,6 +1,7 @@
 <script lang="ts">
   import Self from "./TreeNode.svelte";
   import { ChevronDown, ChevronRight, Plus, ListStart, ListEnd, ArrowRight, Trash2, TriangleAlert } from "lucide-svelte";
+  import { toViewPage, fromViewPage } from "../stores";
 
   export interface EditNode {
     title: string;
@@ -14,6 +15,7 @@
     path = [],
     depth = 0,
     invalidSet = null as Set<EditNode> | null,
+    pageOffset = 0,
     onChanged,
     onRemove,
     onInsertAbove,
@@ -24,6 +26,8 @@
     depth?: number;
     /** 校验不通过（越界/逆序）的节点集合，命中则警戒色高亮 */
     invalidSet?: Set<EditNode> | null;
+    /** 页标签基准页偏移（纯前端）：显示页码 = node.page - pageOffset，编辑回写时加回 */
+    pageOffset?: number;
     onChanged: () => void;
     onRemove: (path: number[]) => void;
     onInsertAbove: (path: number[]) => void;
@@ -31,6 +35,15 @@
   } = $props();
 
   let isInvalid = $derived(!!invalidSet && invalidSet.has(node));
+
+  /** 视图页码 -> 实际页码写入 node（无 0 页；非法输入不写入） */
+  function setPageFromView(ev: Event) {
+    const phys = fromViewPage(parseInt((ev.currentTarget as HTMLInputElement).value, 10), pageOffset);
+    if (phys !== null) {
+      node.page = Math.max(1, phys);
+      onChanged();
+    }
+  }
 
   function addChild() {
     node.kids.push({ title: "新书签", page: node.page, kids: [], expanded: true });
@@ -60,10 +73,11 @@
     <ArrowRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     <span class="shrink-0 text-xs text-muted-foreground">第</span>
     <input
-      type="number" min="1"
+      type="number" min={-pageOffset}
+      title={pageOffset ? `视图页码（无 0 页；实际页码 = 输入值 + ${pageOffset}，负数另加 1）` : undefined}
       class="h-7 w-16 shrink-0 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      bind:value={node.page}
-      oninput={onChanged}
+      value={toViewPage(node.page, pageOffset)}
+      oninput={setPageFromView}
     />
     <span class="shrink-0 text-xs text-muted-foreground">页</span>
     <button class="tree-act" title="上方插入同代书签" onclick={() => onInsertAbove(path)}>
@@ -81,7 +95,7 @@
   </div>
   {#if node.expanded}
     {#each node.kids as kid, i (i)}
-      <Self node={kid} path={[...path, i]} depth={depth + 1} {invalidSet} {onChanged} {onRemove} {onInsertAbove} {onInsertBelow} />
+      <Self node={kid} path={[...path, i]} depth={depth + 1} {invalidSet} pageOffset={pageOffset} {onChanged} {onRemove} {onInsertAbove} {onInsertBelow} />
     {/each}
   {/if}
 </div>

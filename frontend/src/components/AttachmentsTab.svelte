@@ -38,7 +38,7 @@
     busy = true;
     try {
       attachments = (await MetaService.ClearDocAttachments(doc.id)) ?? [];
-      notify("ok", "附件已清空（待保存生效）");
+      notify("ok", "附件已清空");
     } catch (e: any) {
       notify("err", `清空失败：${e?.message ?? e}`);
     } finally {
@@ -63,7 +63,7 @@
     busy = true;
     try {
       attachments = (await MetaService.AddDocAttachments(doc.id, paths)) ?? [];
-      notify("ok", `已添加 ${paths.length} 个附件（保存时写入 PDF）`);
+      notify("ok", `已添加 ${paths.length} 个附件`);
     } catch (e: any) {
       notify("err", `添加附件失败：${e?.message ?? e}`);
     } finally {
@@ -77,7 +77,7 @@
     busy = true;
     try {
       attachments = (await MetaService.RemoveDocAttachments(doc.id, [name])) ?? [];
-      notify("ok", "已移除该附件（保存时写入 PDF）");
+      notify("ok", "已移除该附件");
     } catch (e: any) {
       notify("err", `移除失败：${e?.message ?? e}`);
     } finally {
@@ -87,54 +87,56 @@
 </script>
 
 {#if doc}
-  <UI.Card class="w-full">
-    <UI.CardHeader>
-      <UI.CardTitle class="flex items-center gap-2">
-        <Paperclip class="h-4 w-4 text-primary" /> 附件
-      </UI.CardTitle>
-      <p class="mt-1 text-xs text-muted-foreground">
-        更改将在顶部「保存 / 另存为」时写入 PDF；导入 PDF 时其附件会自动合并进来
-      </p>
-    </UI.CardHeader>
-    <UI.CardContent>
-      {#if busy && !loadedID}
-        <div class="empty"><Loader2 class="h-5 w-5 animate-spin" /> 读取附件…</div>
-      {:else if attachments.length}
-        <div class="flex flex-col gap-1.5">
-          {#each attachments as a (a.fileName)}
-            <div
-              class="attach-row flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm"
-            >
-              <Paperclip class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span class="flex-1 truncate">{a.fileName}</span>
-              {#if a.description}<span class="text-xs text-muted-foreground">{a.description}</span>{/if}
-              <button
-                class="attach-del"
-                title="移除该附件"
-                onclick={() => removeOne(a.fileName)}
+  <div class="px-4 py-4">
+    <UI.Card>
+      <UI.CardHeader>
+        <UI.CardTitle class="flex items-center gap-2">
+          <Paperclip class="h-4 w-4 text-primary" /> 附件
+        </UI.CardTitle>
+      </UI.CardHeader>
+      <UI.CardContent>
+        {#if busy && !loadedID}
+          <div class="empty"><Loader2 class="h-5 w-5 animate-spin" /> 读取附件…</div>
+        {:else if attachments.length}
+          <div class="flex flex-col gap-1.5">
+            {#each attachments as a (a.fileName)}
+              <div
+                class="attach-row flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm"
               >
-                <Trash2 class="h-3.5 w-3.5" />
-              </button>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty-sm">暂无附件</div>
-      {/if}
-    </UI.CardContent>
-    <UI.CardFooter class="gap-3">
-      <UI.Button variant="outline" onclick={addFiles} disabled={busy}>
-        <Plus class="h-4 w-4" /> 添加附件
-      </UI.Button>
-      {#if attachments.length}
-        <UI.Button variant="outline" class="text-destructive hover:text-destructive" onclick={clearAll} disabled={busy}>
-          <Eraser class="h-4 w-4" /> 清空附件
+                <Paperclip class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span class="flex-1 truncate">{a.fileName}</span>
+                {#if a.description}<span class="text-xs text-muted-foreground">{a.description}</span>{/if}
+                <button
+                  class="attach-del"
+                  title="移除该附件"
+                  onclick={() => removeOne(a.fileName)}
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="empty-sm">暂无附件</div>
+        {/if}
+      </UI.CardContent>
+      <UI.CardFooter class="gap-3">
+        <UI.Button variant="outline" onclick={addFiles} disabled={busy}>
+          <Plus class="h-4 w-4" /> 添加附件
         </UI.Button>
-      {/if}
-    </UI.CardFooter>
-  </UI.Card>
+        {#if attachments.length}
+          <UI.Button variant="outline" class="text-destructive hover:text-destructive" onclick={clearAll} disabled={busy}>
+            <Eraser class="h-4 w-4" /> 清空附件
+          </UI.Button>
+        {/if}
+      </UI.CardFooter>
+    </UI.Card>
+  </div>
 {:else}
-  <div class="empty"><FileQuestion class="h-10 w-10" /> 打开 PDF 后管理附件</div>
+        <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+          <FileQuestion class="h-12 w-12" />
+          <p class="text-lg">打开 PDF 开始编辑</p>
+        </div>
 {/if}
 
 <style>

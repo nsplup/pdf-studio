@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -168,8 +169,11 @@ func WritePageLabels(inPath, outPath string, spec *PageLabelSpec) error {
 	if err != nil {
 		return fmt.Errorf("读取文档失败: %w", err)
 	}
+	// PDF 规范要求 Nums 键严格升序，此处按起始页稳定排序，乱序输入也可生成合法树。
+	ranges := append([]PageLabelRange(nil), spec.Ranges...)
+	sort.SliceStable(ranges, func(i, j int) bool { return ranges[i].StartPage < ranges[j].StartPage })
 	nums := types.Array{}
-	for _, r := range spec.Ranges {
+	for _, r := range ranges {
 		lab := types.NewDict()
 		if r.Prefix != "" {
 			lab.Insert("P", types.StringLiteral(escapeString(r.Prefix)))
@@ -184,7 +188,10 @@ func WritePageLabels(inPath, outPath string, spec *PageLabelSpec) error {
 	}
 	pls := types.NewDict()
 	pls.Insert("Nums", nums)
-	ctx.RootDict.Insert("PageLabels", pls)
+	// 注意：pdfcpu 的 Dict.Insert 是「仅当键不存在时才写入」（insert-if-absent），
+	// 对已有页标签的文档使用 Insert 会静默跳过、保留旧标签且不报错，
+	// 导致「保存成功但页标签不生效」。这里必须用 Update 无条件覆盖。
+	ctx.RootDict.Update("PageLabels", pls)
 
 	if err := api.WriteContextFile(ctx, outPath); err != nil {
 		return fmt.Errorf("写入文档失败: %w", err)

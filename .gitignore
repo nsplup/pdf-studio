@@ -11,3 +11,5 @@ bin/
 
 # Misc
 .DS_Store
+
+.task/

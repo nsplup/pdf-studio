@@ -10,6 +10,7 @@
     docID = "",
     pageRes = null as string[] | null,
     selected = new Set<number>(),
+    busy = false,
     onSelectionChange = (_sel: Set<number>) => {},
     onDelete = (_pages: string) => {},
     placing = false,
@@ -23,6 +24,7 @@
     /** 每页缩略图缓存版本（下标 p-1）；0 或缺省 = 尚未生成 */
     pageRes?: string[] | null;
     selected?: Set<number>;
+    busy?: boolean;
     onSelectionChange?: (sel: Set<number>) => void;
     onDelete?: (pages: string) => void;
     placing?: boolean;
@@ -101,7 +103,7 @@
   });
 
   function togglePage(p: number, ev: MouseEvent) {
-    if (placing) return; // 插入模式下点击仅用于选择插入点，不改变选中
+    if (placing || busy) return; // 插入模式下点击仅用于选择插入点，不改变选中
     ev.stopPropagation();
     if (ev.shiftKey && anchor != null) {
       // Shift 范围选择：锚点到当前页
@@ -124,6 +126,7 @@
   function contextMenu(p: number, ev: MouseEvent) {
     ev.preventDefault();
     ev.stopPropagation(); // 冒泡到视口会被 closeMenu 立即关闭（菜单失效根因）
+    if (placing || busy) return;
     if (!selected.has(p)) {
       const next = new Set<number>([p]);
       selected = next;
@@ -250,11 +253,9 @@
               oncontextmenu={(e) => contextMenu(p, e)}
             >
               {#if placing && !selected.has(p)}
-                {#if !(p + 1 <= pageCount && selected.has(p + 1))}
-                  <button class="plus plus-right" title="插入到本页之后" onclick={(e) => placeClick(p, false, e)}>
-                    <Plus class="h-4 w-4" />
-                  </button>
-                {/if}
+                <button class="plus plus-right" title="插入到本页之后" onclick={(e) => placeClick(p, false, e)}>
+                  <Plus class="h-4 w-4" />
+                </button>
                 <button class="plus plus-left" title="插入到本页之前" onclick={(e) => placeClick(p, true, e)}>
                   <Plus class="h-4 w-4" />
                 </button>
@@ -272,26 +273,28 @@
               </div>
               <div class="thumb-label">
                 <span class="label-num">第 {p} 页</span>
-                <button
-                  class="thumb-act thumb-preview"
-                  title="预览本页"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    previewPage = p;
-                  }}
-                >
-                  <Maximize2 class="h-3.5 w-3.5" />
-                </button>
-                <button
-                  class="thumb-act thumb-del"
-                  title="删除本页"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    onDelete(String(p));
-                  }}
-                >
-                  <Trash2 class="h-3.5 w-3.5" />
-                </button>
+                {#if !busy}
+                  <button
+                    class="thumb-act thumb-preview"
+                    title="预览本页"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      previewPage = p;
+                    }}
+                  >
+                    <Maximize2 class="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    class="thumb-act thumb-del"
+                    title="删除本页"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      onDelete(String(p));
+                    }}
+                  >
+                    <Trash2 class="h-3.5 w-3.5" />
+                  </button>
+                {/if}
               </div>
             </div>
           {:else}
@@ -305,8 +308,8 @@
 
 {#if menu}
   <div bind:this={menuEl} class="ctx-menu" style="left:{menu.x}px; top:{menu.y}px" role="menu" onclick={(e) => e.stopPropagation()}>
-    <button class="ctx-item" onclick={menuMove}>移动到…（{menuPages.length} 页）</button>
-    <button class="ctx-item ctx-danger" onclick={menuDelete}>删除（{menuPages.length} 页）</button>
+    <button class="ctx-item" onclick={menuMove}>移动（共 {menuPages.length} 页）</button>
+    <button class="ctx-item ctx-danger" onclick={menuDelete}>删除（共 {menuPages.length} 页）</button>
   </div>
 {/if}
 
