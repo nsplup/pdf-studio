@@ -620,11 +620,12 @@
     </div>
   {/if}
 {:else}
-        <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-          <FileQuestion class="h-12 w-12" />
-          <p class="text-lg">打开 PDF 开始编辑</p>
-        </div>
-
+  <div
+    class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
+  >
+    <FileQuestion class="h-12 w-12" />
+    <p class="text-lg">打开 PDF 开始编辑</p>
+  </div>
 {/if}
 
 <style>

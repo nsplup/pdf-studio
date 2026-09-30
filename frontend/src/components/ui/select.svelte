@@ -60,7 +60,13 @@
   });
 </script>
 
-<div bind:this={root} class="relative" onkeydown={(e) => { if (e.key === "Escape") open = false; }}>
+<div
+  bind:this={root}
+  class="relative"
+  onkeydown={(e) => {
+    if (e.key === "Escape") open = false;
+  }}
+>
   <button
     bind:this={trigger}
     type="button"
@@ -72,13 +78,19 @@
       "hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
       "disabled:cursor-not-allowed disabled:opacity-50",
       open && "ring-2 ring-ring ring-offset-1",
-      className
+      className,
     )}
     onclick={() => (open = !open)}
     {...rest}
   >
-    <span class="truncate" class:text-muted-foreground={!current}>{current?.label ?? placeholder}</span>
-    <ChevronDown class="h-4 w-4 shrink-0 opacity-50 transition-transform {open ? 'rotate-180' : ''}" />
+    <span class="truncate" class:text-muted-foreground={!current}
+      >{current?.label ?? placeholder}</span
+    >
+    <ChevronDown
+      class="h-4 w-4 shrink-0 opacity-50 transition-transform {open
+        ? 'rotate-180'
+        : ''}"
+    />
   </button>
 
   {#if open}
@@ -93,10 +105,16 @@
           role="option"
           aria-selected={o.value === value}
           class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm whitespace-nowrap
-                 {o.value === value ? 'bg-accent/60 text-accent-foreground' : 'hover:bg-accent'}"
+                 {o.value === value
+            ? 'bg-accent/60 text-accent-foreground'
+            : 'hover:bg-accent'}"
           onclick={() => pick(o.value)}
         >
-          <Check class="h-3.5 w-3.5 {o.value === value ? 'opacity-100' : 'opacity-0'}" />
+          <Check
+            class="h-3.5 w-3.5 {o.value === value
+              ? 'opacity-100'
+              : 'opacity-0'}"
+          />
           {o.label}
         </button>
       {/each}

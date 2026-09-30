@@ -45,7 +45,9 @@
   const VP_PAD = 24; // 视口左右内边距合计
 
   let contentW = $derived(Math.max(200, viewportW - VP_PAD));
-  let cols = $derived(Math.max(1, Math.floor((contentW + GAP) / (MIN_CARD_W + GAP))));
+  let cols = $derived(
+    Math.max(1, Math.floor((contentW + GAP) / (MIN_CARD_W + GAP))),
+  );
   let cardW = $derived((contentW - (cols - 1) * GAP) / cols); // 精确铺满一行
   let totalRows = $derived(Math.ceil(pageCount / cols));
 
@@ -233,7 +235,9 @@
     closeMenu();
   }}
 >
-  <div style="height:{$virtualizer.getTotalSize()}px; position:relative; width:100%">
+  <div
+    style="height:{$virtualizer.getTotalSize()}px; position:relative; width:100%"
+  >
     {#each $virtualizer.getVirtualItems() as vrow (vrow.key)}
       <div
         class="thumb-row"
@@ -253,10 +257,18 @@
               oncontextmenu={(e) => contextMenu(p, e)}
             >
               {#if placing && !selected.has(p)}
-                <button class="plus plus-right" title="插入到本页之后" onclick={(e) => placeClick(p, false, e)}>
+                <button
+                  class="plus plus-right"
+                  title="插入到本页之后"
+                  onclick={(e) => placeClick(p, false, e)}
+                >
                   <Plus class="h-4 w-4" />
                 </button>
-                <button class="plus plus-left" title="插入到本页之前" onclick={(e) => placeClick(p, true, e)}>
+                <button
+                  class="plus plus-left"
+                  title="插入到本页之前"
+                  onclick={(e) => placeClick(p, true, e)}
+                >
                   <Plus class="h-4 w-4" />
                 </button>
               {/if}
@@ -264,9 +276,16 @@
                 {#if isBlank(p)}
                   <div class="blank-thumb" style={blankStyle(p)}></div>
                 {:else if urlOf(p)}
-                  <img src={urlOf(p)!} alt="第 {p} 页" loading="lazy" draggable="false" />
+                  <img
+                    src={urlOf(p)!}
+                    alt="第 {p} 页"
+                    loading="lazy"
+                    draggable="false"
+                  />
                 {:else}
-                  <div class="flex h-full w-full items-center justify-center text-muted-foreground">
+                  <div
+                    class="flex h-full w-full items-center justify-center text-muted-foreground"
+                  >
                     <Loader2 class="h-5 w-5 animate-spin" />
                   </div>
                 {/if}
@@ -307,9 +326,19 @@
 </div>
 
 {#if menu}
-  <div bind:this={menuEl} class="ctx-menu" style="left:{menu.x}px; top:{menu.y}px" role="menu" onclick={(e) => e.stopPropagation()}>
-    <button class="ctx-item" onclick={menuMove}>移动（共 {menuPages.length} 页）</button>
-    <button class="ctx-item ctx-danger" onclick={menuDelete}>删除（共 {menuPages.length} 页）</button>
+  <div
+    bind:this={menuEl}
+    class="ctx-menu"
+    style="left:{menu.x}px; top:{menu.y}px"
+    role="menu"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button class="ctx-item" onclick={menuMove}
+      >移动（共 {menuPages.length} 页）</button
+    >
+    <button class="ctx-item ctx-danger" onclick={menuDelete}
+      >删除（共 {menuPages.length} 页）</button
+    >
   </div>
 {/if}
 
@@ -324,75 +353,153 @@
 
 <style>
   .thumb-viewport {
-    height: 100%; overflow-y: auto; overflow-x: hidden;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px 12px 40px 12px;
   }
   .thumb-row {
-    position: absolute; top: 0; left: 0;
-    display: flex; gap: 14px; align-items: flex-start;
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
   }
   .blank-thumb {
     display: block;
     background: white;
   }
   .thumb-card {
-    position: relative; flex: none;
-    border-radius: 8px; cursor: pointer; user-select: none;
+    position: relative;
+    flex: none;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
     border: 2px solid hsl(var(--border));
     background: hsl(var(--card));
-    display: flex; flex-direction: column;
+    display: flex;
+    flex-direction: column;
     transition: border-color 0.12s;
   }
-  .thumb-card:hover { border-color: hsl(var(--primary) / 0.5); }
-  .thumb-card.selected { border-color: hsl(var(--primary)); }
+  .thumb-card:hover {
+    border-color: hsl(var(--primary) / 0.5);
+  }
+  .thumb-card.selected {
+    border-color: hsl(var(--primary));
+  }
   .thumb-card.dimmed {
     opacity: 0.3;
     pointer-events: none;
     filter: grayscale(0.5);
   }
   .thumb-imgwrap {
-    height: 156px; border-radius: 6px 6px 0 0; overflow: hidden;
-    background: hsl(var(--muted) / 0.4); pointer-events: none;
+    height: 156px;
+    border-radius: 6px 6px 0 0;
+    overflow: hidden;
+    background: hsl(var(--muted) / 0.4);
+    pointer-events: none;
   }
-  .thumb-imgwrap img { width: 100%; height: 100%; object-fit: contain; }
+  .thumb-imgwrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
   .thumb-label {
-    height: 26px; display: flex; align-items: center; justify-content: center;
-    font-size: 12px; color: hsl(var(--muted-foreground)); position: relative;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: hsl(var(--muted-foreground));
+    position: relative;
   }
   .thumb-act {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    display: none; align-items: center; justify-content: center;
-    width: 22px; height: 22px; border-radius: 5px;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
     color: hsl(var(--muted-foreground));
   }
-  .thumb-preview { right: 2px; }
-  .thumb-preview:hover { background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); }
-  .thumb-del { left: 2px; color: hsl(var(--destructive)); }
-  .thumb-del:hover { background: hsl(var(--destructive) / 0.12); }
-  .thumb-card:hover .thumb-act { display: inline-flex; }
+  .thumb-preview {
+    right: 2px;
+  }
+  .thumb-preview:hover {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+  .thumb-del {
+    left: 2px;
+    color: hsl(var(--destructive));
+  }
+  .thumb-del:hover {
+    background: hsl(var(--destructive) / 0.12);
+  }
+  .thumb-card:hover .thumb-act {
+    display: inline-flex;
+  }
   .plus {
-    position: absolute; top: 70px; z-index: 10;
-    width: 26px; height: 26px; border-radius: 50%;
-    background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); cursor: pointer;
-    opacity: 0; transition: opacity 0.12s;
+    position: absolute;
+    top: 70px;
+    z-index: 10;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s;
   }
   .thumb-card:hover .plus,
-  .plus:focus-visible { opacity: 1; }
-  .plus:hover { background: hsl(var(--primary) / 0.85); }
-  .plus-left { left: -12px; }
-  .plus-right { right: -12px; }
+  .plus:focus-visible {
+    opacity: 1;
+  }
+  .plus:hover {
+    background: hsl(var(--primary) / 0.85);
+  }
+  .plus-left {
+    left: -12px;
+  }
+  .plus-right {
+    right: -12px;
+  }
   .ctx-menu {
-    position: fixed; z-index: 1000; min-width: 180px;
-    background: hsl(var(--popover)); border: 1px solid hsl(var(--border));
-    border-radius: 8px; padding: 4px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    background: hsl(var(--popover));
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
   }
   .ctx-item {
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    padding: 7px 10px; font-size: 13px; border-radius: 6px;
-    cursor: pointer; color: hsl(var(--foreground)); text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    font-size: 13px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: hsl(var(--foreground));
+    text-align: left;
   }
-  .ctx-item:hover { background: hsl(var(--accent)); }
-  .ctx-danger:hover { background: hsl(var(--destructive) / 0.12); color: hsl(var(--destructive)); }
+  .ctx-item:hover {
+    background: hsl(var(--accent));
+  }
+  .ctx-danger:hover {
+    background: hsl(var(--destructive) / 0.12);
+    color: hsl(var(--destructive));
+  }
 </style>

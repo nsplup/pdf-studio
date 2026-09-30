@@ -150,10 +150,6 @@
         res: res?.res ?? [],
         dims: res?.dims ?? [],
       });
-      notify(
-        "info",
-        "请将鼠标悬停到缩略图上，点击两侧 ⊕ 放置导入内容，Esc 取消",
-      );
     } catch (e: any) {
       notify("err", `导入失败：${e?.message ?? e}`);
     } finally {
@@ -237,10 +233,6 @@
     tab = "thumbs"; // 页面类操作回到缩略图视图
     selected = new Set(); // 空白页放置期间临时清空选中
     startPlacement("blank", null);
-    notify(
-      "info",
-      "请将鼠标悬停到缩略图上，点击两侧 ⊕ 选择空白页插入位置，Esc 取消",
-    );
   }
 
   /** 「移动到」开始（由 ThumbGrid 右键菜单触发） */
@@ -403,7 +395,7 @@
         点击缩略图左右两侧的 ⊕ 放置导入内容
       {/if}
       <UI.Button variant="ghost" size="sm" onclick={handleCancelPlace}>
-        <X class="h-3.5 w-3.5" /> 取消（保持当前选择）
+        <X class="h-3.5 w-3.5" /> 取消
       </UI.Button>
     </div>
   {/if}

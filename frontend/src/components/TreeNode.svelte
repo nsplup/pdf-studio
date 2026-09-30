@@ -1,6 +1,15 @@
 <script lang="ts">
   import Self from "./TreeNode.svelte";
-  import { ChevronDown, ChevronRight, Plus, ListStart, ListEnd, ArrowRight, Trash2, TriangleAlert } from "lucide-svelte";
+  import {
+    ChevronDown,
+    ChevronRight,
+    Plus,
+    ListStart,
+    ListEnd,
+    ArrowRight,
+    Trash2,
+    TriangleAlert,
+  } from "lucide-svelte";
   import { toViewPage, fromViewPage } from "../stores";
 
   export interface EditNode {
@@ -38,7 +47,10 @@
 
   /** 视图页码 -> 实际页码写入 node（无 0 页；非法输入不写入） */
   function setPageFromView(ev: Event) {
-    const phys = fromViewPage(parseInt((ev.currentTarget as HTMLInputElement).value, 10), pageOffset);
+    const phys = fromViewPage(
+      parseInt((ev.currentTarget as HTMLInputElement).value, 10),
+      pageOffset,
+    );
     if (phys !== null) {
       node.page = Math.max(1, phys);
       onChanged();
@@ -46,17 +58,33 @@
   }
 
   function addChild() {
-    node.kids.push({ title: "新书签", page: node.page, kids: [], expanded: true });
+    node.kids.push({
+      title: "新书签",
+      page: node.page,
+      kids: [],
+      expanded: true,
+    });
     node.expanded = true;
     onChanged();
   }
 </script>
 
 <div>
-  <div class="tree-row flex items-center gap-1.5 py-0.5 pr-2" style="margin-left:{depth * 16}px">
+  <div
+    class="tree-row flex items-center gap-1.5 py-0.5 pr-2"
+    style="margin-left:{depth * 16}px"
+  >
     {#if node.kids.length}
-      <button class="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-accent" onclick={() => { node.expanded = !node.expanded; onChanged(); }}>
-        {#if node.expanded}<ChevronDown class="h-4 w-4 text-muted-foreground" />{:else}<ChevronRight class="h-4 w-4 text-muted-foreground" />{/if}
+      <button
+        class="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-accent"
+        onclick={() => {
+          node.expanded = !node.expanded;
+          onChanged();
+        }}
+      >
+        {#if node.expanded}<ChevronDown
+            class="h-4 w-4 text-muted-foreground"
+          />{:else}<ChevronRight class="h-4 w-4 text-muted-foreground" />{/if}
       </button>
     {:else}
       <span class="h-6 w-6 shrink-0"></span>
@@ -73,29 +101,54 @@
     <ArrowRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     <span class="shrink-0 text-xs text-muted-foreground">第</span>
     <input
-      type="number" min={-pageOffset}
-      title={pageOffset ? `视图页码（无 0 页；实际页码 = 输入值 + ${pageOffset}，负数另加 1）` : undefined}
+      type="number"
+      min={-pageOffset}
+      title={pageOffset
+        ? `视图页码（无 0 页；实际页码 = 输入值 + ${pageOffset}，负数另加 1）`
+        : undefined}
       class="h-7 w-16 shrink-0 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       value={toViewPage(node.page, pageOffset)}
       oninput={setPageFromView}
     />
     <span class="shrink-0 text-xs text-muted-foreground">页</span>
-    <button class="tree-act" title="上方插入同代书签" onclick={() => onInsertAbove(path)}>
+    <button
+      class="tree-act"
+      title="上方插入同代书签"
+      onclick={() => onInsertAbove(path)}
+    >
       <ListStart class="h-4 w-4" />
     </button>
-    <button class="tree-act" title="下方插入同代书签" onclick={() => onInsertBelow(path)}>
+    <button
+      class="tree-act"
+      title="下方插入同代书签"
+      onclick={() => onInsertBelow(path)}
+    >
       <ListEnd class="h-4 w-4" />
     </button>
     <button class="tree-act" title="添加子书签" onclick={addChild}>
       <Plus class="h-4 w-4" />
     </button>
-    <button class="tree-act tree-danger" title="删除（含子节点）" onclick={() => onRemove(path)}>
+    <button
+      class="tree-act tree-danger"
+      title="删除（含子节点）"
+      onclick={() => onRemove(path)}
+    >
       <Trash2 class="h-4 w-4" />
     </button>
   </div>
   {#if node.expanded}
     {#each node.kids as kid, i (i)}
-      <Self node={kid} path={[...path, i]} depth={depth + 1} {invalidSet} pageOffset={pageOffset} {onChanged} {onRemove} {onInsertAbove} {onInsertBelow} />
+      <Self
+        node={kid}
+        path={[...path, i]}
+        depth={depth + 1}
+        {invalidSet}
+        {pageOffset}
+        {onChanged}
+        {onRemove}
+        {onInsertAbove}
+        {onInsertBelow}
+      />
     {/each}
   {/if}
 </div>
@@ -128,10 +181,18 @@
     outline: none;
   }
   .tree-act {
-    display: flex; align-items: center; justify-content: center;
-    height: 26px; width: 26px; flex: none;
-    border-radius: 6px; color: hsl(var(--muted-foreground));
-    opacity: 0; transition: opacity 0.12s, background-color 0.12s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 26px;
+    width: 26px;
+    flex: none;
+    border-radius: 6px;
+    color: hsl(var(--muted-foreground));
+    opacity: 0;
+    transition:
+      opacity 0.12s,
+      background-color 0.12s;
   }
   .tree-row:hover .tree-act,
   .tree-row:focus-within .tree-act {

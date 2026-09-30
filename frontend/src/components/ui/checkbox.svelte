@@ -5,10 +5,21 @@
     label,
     class: className,
     disabled = false,
-  }: { checked?: boolean; label?: string; class?: string; disabled?: boolean } = $props();
+  }: {
+    checked?: boolean;
+    label?: string;
+    class?: string;
+    disabled?: boolean;
+  } = $props();
 </script>
 
-<label class={cn("inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground select-none", disabled && "opacity-50 cursor-not-allowed", className)}>
+<label
+  class={cn(
+    "inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground select-none",
+    disabled && "opacity-50 cursor-not-allowed",
+    className,
+  )}
+>
   <input
     type="checkbox"
     bind:checked
