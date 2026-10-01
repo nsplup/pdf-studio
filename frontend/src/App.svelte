@@ -251,7 +251,10 @@
     if (!doc) return;
     const res = $pageRes[doc.id];
     const dims = $pageDims[doc.id];
-    if (!Array.isArray(res) || !Array.isArray(dims)) return;
+    if (!Array.isArray(res) || !Array.isArray(dims)) {
+      notify("err", "页面资源尚未加载完成，请稍后再试");
+      return;
+    }
     busy = true;
     try {
       if ($placement.kind === "move") {
@@ -262,9 +265,7 @@
         const rest = res.filter((_, i) => !selSet.has(i + 1));
         const restDims = dims.filter((_, i) => !selSet.has(i + 1));
 
-        // 目标插入位（原序列 1-based，表示“插入到该索引页之前”）
         const anchor = before ? atIndex : atIndex + 1;
-        // 关键：比较基准固定为 anchor，不随递减变化
         let removedBefore = 0;
         for (const n of selPages) if (n < anchor) removedBefore++;
         const insertAt = Math.max(
@@ -289,7 +290,6 @@
         stopPlacement();
         notify("ok", `已移动 ${selPages.length} 页`);
       } else if ($placement.kind === "blank") {
-        // 空白页：尺寸 = 被点击 ⊕ 的那个页面（锚点页）的尺寸；保存时由后端生成
         const anchorIdx = Math.min(Math.max(atIndex, 1), dims.length);
         const ad = dims[anchorIdx - 1] ??
           dims[0] ?? { width: 595, height: 842 };
@@ -309,9 +309,26 @@
         stopPlacement();
         notify("ok", "已插入空白页");
       } else {
-        // 导入放置：缓冲页资源 uuid 直接拼接
+        // 导入放置：先让后端消费缓冲区（合并书签/页标签/附件），
+        // 成功后再一次性写入前端状态。失败则前端保持原状，
+        // placement 保留，用户可重试或取消。
         const bres = $placement.buffer?.res ?? [];
         const bdims = $placement.buffer?.dims ?? [];
+        if (!bres.length) {
+          notify("err", "导入缓冲区为空，已取消放置");
+          stopPlacement();
+          return;
+        }
+
+        // 1) 后端：消费 buffer 并返回平移后的辅助数据。
+        //    这一步失败会抛错，进入外层 catch。
+        const r = await DocumentService.AbsorbBufferAux(
+          doc.id,
+          atIndex,
+          before,
+        );
+
+        // 2) 前端：后端已成功，原子写入页面序列与尺寸。
         const insertAt = before ? atIndex : atIndex + 1;
         replacePageRes(doc.id, [
           ...res.slice(0, insertAt - 1),
@@ -323,18 +340,21 @@
           ...bdims.map((d) => ({ ...d })),
           ...dims.slice(insertAt - 1),
         ]);
-        // 缓冲区辅助数据（书签/页标签/附件）按插入位置平移合并
-        const r = await DocumentService.AbsorbBufferAux(
-          doc.id,
-          atIndex,
-          before,
-        );
+
+        // 3) 合并辅助数据到各子页面。
+        //    B7 修复后，若对应 Tab 尚未成功加载，addNodes/mergeLabels
+        //    会丢弃增量并 notify，不会把空数组误写回。
         if (r?.addedOutline?.length) outlineTab?.addNodes(r.addedOutline);
         if (r?.addedLabels?.length) labelsTab?.mergeLabels(r.addedLabels);
         if (r?.addedAttachments?.length) await attachmentsTab?.reload();
+
         stopPlacement();
         notify("ok", `已放置导入内容 ${bres.length} 页`);
       }
+    } catch (e: any) {
+      // 不再吞异常：显式提示，placement 保留，
+      // 用户可重试或点「取消」（handleCancelPlace 会 DiscardBuffer）。
+      notify("err", `放置失败：${e?.message ?? e}`);
     } finally {
       busy = false;
     }

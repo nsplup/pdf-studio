@@ -722,7 +722,9 @@ func (s *DocumentService) AbsorbBufferAux(id string, atIndex int, before bool) (
 	doc.mu.Lock()
 	defer doc.mu.Unlock()
 	if doc.buffer == nil {
-		return &PlaceResult{Info: doc.docInfo()}, nil
+		// 不再静默返回空结果：调用方必须知道缓冲区已不存在，
+		// 否则前端会误以为辅助数据已合并，或把空页面插入序列。
+		return nil, NewErr("INVALID_PARAM", "没有待放置的导入内容")
 	}
 	insertOffset := atIndex - 1
 	if !before {
