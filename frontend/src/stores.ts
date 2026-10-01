@@ -167,6 +167,15 @@ export function initTaskEvents() {
       if (r) {
         taskResolvers.delete(u.taskId);
         r(u.kind === "done", u.error, u.result);
+      } else {
+        // waitTask 还没注册：先缓存，等它到来时立即消费。
+        // 修复「小任务毫秒级完成，done 事件先于 resolver 注册」的竞态。
+        rememberTaskResult(u.taskId, {
+          ok: u.kind === "done",
+          err: u.error,
+          result: u.result,
+          at: Date.now(),
+        });
       }
     }
   });
@@ -193,9 +202,55 @@ export function stopPlacement() {
 }
 
 // ---------- 任务完成等待 ----------
-const taskResolvers = new Map<string, (ok: boolean, err?: string, result?: any) => void>();
+//
+// 竞态修复：后端启动 goroutine 与前端注册 resolver 之间没有顺序保证，
+// 小任务可能在 waitTask 注册前就发出 task:update(done/error)。
+// 因此 initTaskEvents 必须把「已完成但还没有 resolver」的结果缓存下来，
+// 供随后到来的 waitTask 立即取用。
+
+interface TaskResult {
+  ok: boolean;
+  err?: string;
+  result?: any;
+  /** 缓存时间戳，用于过期清理 */
+  at: number;
+}
+
+const taskResolvers = new Map<
+  string,
+  (ok: boolean, err?: string, result?: any) => void
+>();
+
+const taskResults = new Map<string, TaskResult>();
+
+/** 缓存保留时长：避免 fire-and-forget 任务的结果无限积累 */
+const TASK_RESULT_TTL_MS = 30_000;
+/** 缓存条目上限，防止极端情况下内存膨胀 */
+const TASK_RESULT_MAX = 128;
+
+function rememberTaskResult(taskId: string, r: TaskResult) {
+  const now = r.at;
+  // 先清理过期项
+  for (const [k, v] of taskResults) {
+    if (now - v.at > TASK_RESULT_TTL_MS) taskResults.delete(k);
+  }
+  taskResults.set(taskId, r);
+  // 再按插入顺序淘汰，Map 保持插入序
+  while (taskResults.size > TASK_RESULT_MAX) {
+    const oldest = taskResults.keys().next().value;
+    if (oldest === undefined) break;
+    taskResults.delete(oldest);
+  }
+}
 
 export function waitTask(taskId: string): Promise<any> {
+  const cached = taskResults.get(taskId);
+  if (cached) {
+    taskResults.delete(taskId);
+    return cached.ok
+      ? Promise.resolve(cached.result)
+      : Promise.reject(new Error(cached.err ?? "任务失败"));
+  }
   return new Promise((resolve, reject) => {
     taskResolvers.set(taskId, (ok, err, result) =>
       ok ? resolve(result) : reject(new Error(err ?? "任务失败"))
