@@ -1,10 +1,8 @@
 package service
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/rand"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,12 +13,27 @@ import (
 	"pdfstudio/internal/engine"
 )
 
-// 页面资源模型：每页内容对应一个内容哈希（sha1 hex）uuid，
-// 资源文件位于 <ws>/thumbs/<uuid>/<宽>.png，可跨文档、跨会话复用。
-// 前端持有 uuid 有序列表（页面逻辑顺序），删除/移动/插入均为纯前端操作，
-// 仅在保存/另存为时把最终序列交给后端装配。
+// 页面资源 uuid：随机句柄，唯一对应一个来源页。
+// 不再用缩略图哈希做内容去重。
+var resourceIDRe = regexp.MustCompile(
+	`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+)
 
-var resourceIDRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+func newResourceID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+
+	// RFC 4122 UUID v4
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf(
+		"%x-%x-%x-%x-%x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16],
+	), nil
+}
 
 // IsResourceID 判断目录段是否为页面资源 uuid。
 func IsResourceID(s string) bool { return resourceIDRe.MatchString(s) }
@@ -47,45 +60,73 @@ func ParseBlankMarker(s string) (w, h float64, ok bool) {
 	return ww, hh, true
 }
 
-func hashFileSum(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha1.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
 // pageSource 记录资源 uuid 的内容来源（持久化的 PDF 文件 + 页码）。
 type pageSource struct {
 	Path string
 	Page int
 }
 
-// ensurePageRes 渲染文档第 page 页 140px 基图并注册内容资源，返回 uuid。
 func (s *DocumentService) ensurePageRes(workPath string, page int) (string, error) {
-	tmp := engine.TempPath("res-hash.png")
-	defer func() { _ = os.Remove(tmp) }()
+	// 1) 渲染到唯一临时文件，顺手避免 res-hash.png 固定名并发互踩
+	tmpFile, err := os.CreateTemp("", "pdfstudio-res-*.png")
+	if err != nil {
+		return "", WrapErr("RENDER_FAILED", "创建临时文件失败", err)
+	}
+	tmp := tmpFile.Name()
+	_ = tmpFile.Close()
+	defer os.Remove(tmp)
+
 	if err := engine.RenderPagePNGToFile(workPath, page, 140, tmp); err != nil {
 		return "", WrapErr("RENDER_FAILED", fmt.Sprintf("渲染第 %d 页失败", page), err)
 	}
-	u, err := hashFileSum(tmp)
-	if err != nil {
-		return "", err
+
+	// 2) 生成随机 uuid，并原子占用资源目录
+	var u string
+	var resDir string
+	for i := 0; i < 20; i++ {
+		id, err := newResourceID()
+		if err != nil {
+			return "", err
+		}
+
+		// 随机 UUID 理论碰撞概率极低，但仍显式检查
+		if _, loaded := s.store.resReg.Load(id); loaded {
+			continue
+		}
+
+		dir := s.store.ws.ResourceDir(id)
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+			return "", err
+		}
+
+		// 用 Mkdir 而不是 MkdirAll：目录已存在说明碰撞，换一个
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", err
+		}
+
+		u, resDir = id, dir
+		break
 	}
-	resDir := s.store.ws.ResourceDir(u)
-	if err := os.MkdirAll(resDir, 0o755); err != nil {
-		return "", err
+	if u == "" {
+		return "", NewErr("RESOURCE_ID_FAILED", "生成页面资源标识失败")
 	}
+
+	// 3) 落盘 140px 基图
 	dst := filepath.Join(resDir, "140.png")
-	if _, err := os.Stat(dst); err != nil {
-		_ = os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.RemoveAll(resDir)
+		return "", WrapErr("RENDER_FAILED", "保存页面资源失败", err)
 	}
-	s.store.resReg.Store(u, pageSource{Path: workPath, Page: page})
+
+	// 4) 注册来源。随机 uuid 不会覆盖已有条目
+	s.store.resReg.Store(u, pageSource{
+		Path: workPath,
+		Page: page,
+	})
+
 	return u, nil
 }
 
