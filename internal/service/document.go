@@ -568,8 +568,15 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 		}
 		bufPDF := filepath.Join(bufDir, "buffer.pdf")
 
-		var pieces []string
-		var images []string
+		// pieceInfo 记录一个片段在缓冲区内的角色：
+		// path 是实际参与合并的文件；src 仅当片段来自用户选择的 PDF 时非空，
+		// 用于后续填充 ImportBuffer.Sources（页标签/附件合并的来源）。
+		type pieceInfo struct {
+			path string
+			src  string
+		}
+
+		var infos []pieceInfo
 		cleanup := []string{}
 		defer func() {
 			for _, f := range cleanup {
@@ -578,17 +585,31 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 		}()
 
 		total := len(paths)
-		for i, p := range paths {
+		// 按用户选择的原始顺序扫描：PDF 各自成段，连续图片合并为一个段，
+		// 且该图片段必须保持在原位置，不得整体移到末尾。
+		for i := 0; i < len(paths); {
+			p := paths[i]
 			ext := strings.ToLower(filepath.Ext(p))
-			report(i, total, fmt.Sprintf("解析 %d/%d：%s", i+1, total, filepath.Base(p)))
 			if ext == ".pdf" {
-				pieces = append(pieces, p)
-			} else {
-				images = append(images, p)
+				report(i, total, fmt.Sprintf("解析 %d/%d：%s", i+1, total, filepath.Base(p)))
+				infos = append(infos, pieceInfo{path: p, src: p})
+				i++
+				continue
 			}
-		}
-		if len(images) > 0 {
-			tmpImg := filepath.Join(bufDir, "images-part.pdf")
+			// 连续图片：从 i 开始收集，遇到 PDF 停下
+			start := i
+			var images []string
+			for i < len(paths) {
+				q := paths[i]
+				qe := strings.ToLower(filepath.Ext(q))
+				if qe == ".pdf" {
+					break
+				}
+				report(i, total, fmt.Sprintf("解析 %d/%d：%s", i+1, total, filepath.Base(q)))
+				images = append(images, q)
+				i++
+			}
+			tmpImg := filepath.Join(bufDir, fmt.Sprintf("images-part-%d.pdf", start))
 			if err := engine.ImportImagesToPDF(images, tmpImg, engine.ImageImportConfig{
 				PageSize: engine.PageSizeAuto,
 			}); err != nil {
@@ -596,8 +617,12 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 				return nil, WrapErr("IMPORT_FAILED", "图片解析失败", err)
 			}
 			cleanup = append(cleanup, tmpImg)
-			// 图片按文件名自然序逐页合并（ImportImagesToPDF 按传入顺序）
-			pieces = append(pieces, tmpImg)
+			infos = append(infos, pieceInfo{path: tmpImg})
+		}
+
+		pieces := make([]string, 0, len(infos))
+		for _, info := range infos {
+			pieces = append(pieces, info.path)
 		}
 
 		report(total, total, "生成待放置内容")
@@ -627,10 +652,34 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			_ = count
 		}
 
-		// 覆盖旧缓冲区
+		// 计算每个 PDF 片段在缓冲区内的起始页，填充 Sources。
+		// 图片片段不是用户原始 PDF，不进入 Sources（无页标签/附件可合并）。
+		var sources []BufSource
+		start := 0
+		for _, info := range infos {
+			cnt, cerr := engine.PageCount(info.path)
+			if cerr != nil {
+				cnt = 0
+			}
+			if info.src != "" {
+				sources = append(sources, BufSource{
+					Path:  info.src,
+					Start: start,
+					Count: cnt,
+				})
+			}
+			start += cnt
+		}
+
 		doc.mu.Lock()
 		old := doc.buffer
-		doc.buffer = &ImportBuffer{ID: bufID, PDFPath: bufPDF, ThumbsDir: bufDir, PageCount: count}
+		doc.buffer = &ImportBuffer{
+			ID:        bufID,
+			PDFPath:   bufPDF,
+			ThumbsDir: bufDir,
+			PageCount: count,
+			Sources:   sources,
+		}
 		doc.mu.Unlock()
 		if old != nil {
 			_ = os.RemoveAll(old.ThumbsDir)
