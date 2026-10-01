@@ -3,7 +3,7 @@
   import { CheckCircle2, XCircle, Info } from "lucide-svelte";
 </script>
 
-<div class="fixed right-4 top-4 z-[1000] flex flex-col gap-2 max-w-sm">
+<div class="fixed right-4 top-15 z-[1000] flex flex-col gap-2 max-w-sm">
   {#each $toasts as t (t.id)}
     <div
       class="flex items-start gap-2 rounded-lg border bg-popover px-4 py-3 text-sm shadow-lg

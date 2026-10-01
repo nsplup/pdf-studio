@@ -104,7 +104,7 @@
       <UI.CardContent>
         {#if busy && !loadedID}
           <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 读取附件…
+            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取附件
           </div>
         {:else if attachments.length}
           <div class="flex flex-col gap-1.5">

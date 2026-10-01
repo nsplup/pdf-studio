@@ -24,6 +24,7 @@
     onClose?: () => void;
   } = $props();
 
+  // svelte-ignore state_referenced_locally
   let cur = $state(page);
   let url = $state("");
   let loading = $state(true);
@@ -118,6 +119,7 @@
 </script>
 
 <svelte:window onmouseup={onUp} />
+<!-- svelte-ignore a11y_interactive_supports_focus -->
 <div
   class="preview-overlay"
   role="dialog"

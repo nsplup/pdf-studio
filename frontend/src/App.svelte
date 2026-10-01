@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     DocumentService,
+    type DocInfo,
     type OutlineNode,
     type PageLabel,
   } from "./bindings/services";
@@ -84,7 +85,7 @@
 
   /** 确保缩略图已生成：已有版本（本会话生成过）直接复用；文件在但无版本则初始化；否则全量生成 */
   /** 拉取页面内容资源（内容寻址；未加载过时后端渲染 140px 基图） */
-  async function ensureThumbs(d: { id: string; pageRes?: string[] }) {
+  async function ensureThumbs(d: DocInfo) {
     const cur = $pageRes[d.id];
     if (Array.isArray(cur)) return; // 已就绪
     if (cur === null) return; // 拉取中
@@ -105,7 +106,7 @@
         d.pages.map((p) => ({ ...p })),
       );
     } catch (e: any) {
-      setPageRes(d.id, undefined);
+      setPageRes(d.id, null);
       notify("err", `缩略图加载失败：${e?.message ?? e}`);
     }
   }
@@ -193,7 +194,6 @@
     }
     const out = await pickSavePDF(
       doc.fileName.replace(/\.pdf$/i, "") + "-副本.pdf",
-      "另存为",
     );
     if (!out) return;
     busy = true;
@@ -208,22 +208,25 @@
     }
   }
 
-  /** 收集书签/页标签的待保存状态（undefined = 该类数据未修改） */
+  /** 收集当前文档的全部可保存数据；只要文档打开就返回完整对象 */
   function collectSaveOptions() {
+    if (!doc) return null;
     const opts: {
       outline?: OutlineNode[];
       labels?: PageLabel[];
       pageSeq?: string[];
     } = {};
+
     const tree = outlineTab?.getTree();
     if (tree !== undefined) opts.outline = tree;
+
     const labels = labelsTab?.getLabels();
     if (labels !== undefined) opts.labels = labels;
-    if (doc) {
-      const seq = $pageRes[doc.id];
-      if (Array.isArray(seq)) opts.pageSeq = seq; // 页面序列：删除/移动/插入在此落地
-    }
-    return Object.keys(opts).length ? opts : null;
+
+    const seq = $pageRes[doc.id];
+    if (Array.isArray(seq)) opts.pageSeq = seq;
+
+    return opts;
   }
 
   // ---------- 放置流 ----------

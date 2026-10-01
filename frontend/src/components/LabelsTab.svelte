@@ -13,7 +13,7 @@
   let { pageCount = null as number | null } = $props();
   let doc = $derived($currentDoc);
   /** 逻辑页数（含未保存的插入/删除） */
-  let total = $derived(pageCount ?? total);
+  let total = $derived(pageCount ?? 0);
   let loadedKey = $state("");
   /** UI 内使用 1-based 起始页；保存时转回 0-based */
   let labels = $state<
@@ -115,9 +115,8 @@
 
   // ---------- 供 App 调用的接口 ----------
 
-  /** 当前页标签（0-based）；未修改返回 undefined = 保存时不修改 */
   export function getLabels(): PageLabel[] | undefined {
-    if (!touched) return undefined;
+    if (loadedKey !== doc?.sourcePath) return undefined;
     return labels.map((l) => ({
       startPage: Math.max(0, l.startPage - 1),
       prefix: l.prefix || undefined,
@@ -192,7 +191,7 @@
       <UI.CardContent>
         {#if busy && !labels.length}
           <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 读取页标签…
+            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取页标签
           </div>
         {:else if labels.length}
           <div class="-mx-1 overflow-x-auto px-1 pb-1">

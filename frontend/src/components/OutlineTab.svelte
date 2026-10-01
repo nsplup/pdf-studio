@@ -52,6 +52,7 @@
    * - 文本编辑 → oninput 直接更新 outlines → 树状视图随 outlines 刷新。
    * 两个视图都只渲染 outlines，不存在独立状态与特例。
    */
+  // svelte-ignore state_referenced_locally
   let lastMode = mode;
   let lastTreeJson = "";
   let lastSyncOff = -1;
@@ -541,6 +542,8 @@
   </div>
 
   {#if showLog}
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       class="log-overlay"
       role="dialog"

@@ -15,7 +15,7 @@ export const tasks = writable<RunningTask[]>([]);
 
 // ---------- 通知 ----------
 
-export interface Toast { kind: "ok" | "err" | "info"; text: string; }
+export interface Toast { kind: "ok" | "err" | "info"; text: string; id: number }
 export const toasts = writable<Toast[]>([]);
 
 let toastSeq = 0;
