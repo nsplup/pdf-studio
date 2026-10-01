@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -236,15 +237,70 @@ func AddAttachments(inPath, outPath string, files []string) error {
 	return nil
 }
 
+// sanitizeAttachmentName 校验 PDF 内附件名可作为本地文件名使用。
+// 拒绝空串、绝对路径、含路径分隔符、"." / ".."、NUL 等，
+// 防止恶意 PDF 通过附件名逃出目标目录（路径穿越）。
+func sanitizeAttachmentName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("附件名为空")
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("附件名含 NUL")
+	}
+	// 不接受任何路径语义：含 "/" 或 "\" 一律拒绝。
+	// 正常 PDF 附件名应是纯文件名，不含目录部分。
+	if strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("附件名含路径分隔符: %q", name)
+	}
+	if name == "." || name == ".." {
+		return "", fmt.Errorf("附件名为保留名: %q", name)
+	}
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("附件名为绝对路径: %q", name)
+	}
+	// 最后再确认一次：Base 必须等于自身。
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("附件名非法: %q", name)
+	}
+	return name, nil
+}
+
 // ExtractAttachment 提取单个附件文件到 outDir，返回落盘路径。
+// 对附件名做严格清洗，并在落盘后复核路径确实位于 outDir 内。
 func ExtractAttachment(inPath, fileName, outDir string) (string, error) {
+	safe, err := sanitizeAttachmentName(fileName)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", fmt.Errorf("创建附件目录失败: %w", err)
 	}
+	// 用原始名去匹配附件；pdfcpu 的匹配是按名字查找，不能传清洗后的名。
 	if err := api.ExtractAttachmentsFile(inPath, outDir, []string{fileName}, Config()); err != nil {
 		return "", fmt.Errorf("提取附件失败: %w", err)
 	}
-	out := filepath.Join(outDir, fileName)
+
+	out := filepath.Join(outDir, safe)
+
+	// 二次边界校验：即使前一步被绕过，这里也必须拦住。
+	// 先做一次 Abs，再算 Rel，兼容软链路径与相对路径。
+	outAbs, err := filepath.Abs(out)
+	if err != nil {
+		return "", fmt.Errorf("附件落盘路径无效: %w", err)
+	}
+	dirAbs, err := filepath.Abs(outDir)
+	if err != nil {
+		return "", fmt.Errorf("附件目录无效: %w", err)
+	}
+	rel, err := filepath.Rel(dirAbs, outAbs)
+	if err != nil {
+		return "", fmt.Errorf("附件落盘路径越界: %q", fileName)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("附件落盘路径越界: %q", fileName)
+	}
+
 	if _, err := os.Stat(out); err != nil {
 		return "", fmt.Errorf("附件未落盘: %s", fileName)
 	}
