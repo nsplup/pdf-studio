@@ -271,19 +271,26 @@ type SaveOptions struct {
 	Labels  *[]PageLabel `json:"labels,omitempty"`
 }
 
-// SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，不触碰其他已有文件内容。
+// SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，
+// 并把会话切换到目标文件（后续 Save 写回目标；docInfo 返回新路径与文件名）。
 func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*DocInfo, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	// 与 DocStore.Create 一致，统一绝对路径
+	abs, err := filepath.Abs(targetPath)
+	if err != nil {
+		return nil, WrapErr("INVALID_PATH", "目标路径无效", err)
+	}
+	targetPath = abs
+
 	doc.mu.Lock()
 	defer doc.mu.Unlock()
 
 	out := targetPath + ".pdfstudio-tmp"
 	_ = os.Remove(out)
-	applied, err := s.mergeAux(doc, opts, out)
-	if err != nil {
+	if _, err := s.mergeAux(doc, opts, out); err != nil {
 		_ = os.Remove(out)
 		return nil, err
 	}
@@ -292,11 +299,14 @@ func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*Doc
 		return nil, err
 	}
 	_ = os.Remove(out)
-	if applied {
-		if err := doc.adoptWorkCopy(targetPath); err != nil {
-			return nil, err
-		}
+
+	// 关键：无论是否有页面序列变更，都把目标文件接管为新的工作副本，
+	// 并把会话的当前路径切到目标文件；此后 Save 写目标，docInfo 也返回新路径。
+	if err := doc.adoptWorkCopy(targetPath); err != nil {
+		return nil, err
 	}
+	doc.SourcePath = targetPath
+
 	return doc.docInfo(), nil
 }
 

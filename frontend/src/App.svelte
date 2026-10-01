@@ -173,7 +173,7 @@
     try {
       const d = await DocumentService.Save(doc.id, collectSaveOptions());
       applyDocUpdate(d);
-      notify("ok", "已保存到原文件");
+      notify("ok", "已保存");
     } catch (e: any) {
       notify("err", `保存失败：${e?.message ?? e}`);
     } finally {
@@ -200,9 +200,9 @@
     try {
       const d = await DocumentService.SaveAs(doc.id, out, collectSaveOptions());
       applyDocUpdate(d);
-      notify("ok", `已另存：${out.split(/[\\/]/).pop()}`);
+      notify("ok", `已保存到：${out.split(/[\\/]/).pop()}`);
     } catch (e: any) {
-      notify("err", `另存失败：${e?.message ?? e}`);
+      notify("err", `保存失败：${e?.message ?? e}`);
     } finally {
       busy = false;
     }

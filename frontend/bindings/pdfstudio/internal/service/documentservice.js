@@ -212,7 +212,8 @@ export function Save(id, opts) {
 }
 
 /**
- * SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，不触碰其他已有文件内容。
+ * SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，
+ * 并把会话切换到目标文件（后续 Save 写回目标；docInfo 返回新路径与文件名）。
  * @param {string} id
  * @param {string} targetPath
  * @param {$models.SaveOptions | null} opts

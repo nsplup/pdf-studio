@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/gen2brain/go-fitz v1.28.2
 	github.com/pdfcpu/pdfcpu v0.15.0
-	github.com/wailsapp/wails/v3 v3.0.0-beta.25
+	github.com/wailsapp/wails/v3 v3.0.0-beta.26
 )
 
 require (
