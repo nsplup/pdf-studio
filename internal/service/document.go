@@ -273,6 +273,10 @@ type SaveOptions struct {
 
 // SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，
 // 并把会话切换到目标文件（后续 Save 写回目标；docInfo 返回新路径与文件名）。
+//
+// 顺序与 Save 一致：mergeAux → adoptWorkCopy → atomicWrite(target)。
+// 先接纳新工作版本再写目标文件，失败时目标文件保持不变，
+// 会话 WorkPath 已自洽，用户可重试。
 func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*DocInfo, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
@@ -294,23 +298,29 @@ func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*Doc
 		_ = os.Remove(out)
 		return nil, err
 	}
-	if err := atomicWrite(targetPath, out); err != nil {
+
+	// 先把 merged 内容纳入版本链（与 Save 一致）。
+	if err := doc.adoptWorkCopy(out); err != nil {
 		_ = os.Remove(out)
 		return nil, err
 	}
 	_ = os.Remove(out)
 
-	// 关键：无论是否有页面序列变更，都把目标文件接管为新的工作副本，
-	// 并把会话的当前路径切到目标文件；此后 Save 写目标，docInfo 也返回新路径。
-	if err := doc.adoptWorkCopy(targetPath); err != nil {
+	// 用新的工作版本原子替换目标文件。
+	if err := atomicWrite(targetPath, doc.WorkPath); err != nil {
 		return nil, err
 	}
+
 	doc.SourcePath = targetPath
 
 	return doc.docInfo(), nil
 }
 
 // Save 保存到原始文件（合并辅助数据；临时文件 + 原子替换，避免写坏原文件）。
+//
+// 顺序：mergeAux → adoptWorkCopy → atomicWrite。
+// 先接纳新工作版本再写原文件，保证即便写原文件失败，会话状态也自洽：
+// WorkPath 反映合并后的内容，下次保存不会基于旧内容重新装配。
 func (s *DocumentService) Save(id string, opts *SaveOptions) (*DocInfo, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
@@ -321,20 +331,23 @@ func (s *DocumentService) Save(id string, opts *SaveOptions) (*DocInfo, error) {
 
 	out := doc.SourcePath + ".pdfstudio-tmp"
 	_ = os.Remove(out)
-	applied, err := s.mergeAux(doc, opts, out)
-	if err != nil {
+	if _, err := s.mergeAux(doc, opts, out); err != nil {
 		_ = os.Remove(out)
 		return nil, err
 	}
-	if err := atomicWrite(doc.SourcePath, out); err != nil {
+
+	// 先把 merged 内容纳入版本链，更新 WorkPath 与页面状态。
+	// 失败时原文件未被触碰，会话状态也未改变，用户可重试。
+	if err := doc.adoptWorkCopy(out); err != nil {
 		_ = os.Remove(out)
 		return nil, err
 	}
 	_ = os.Remove(out)
-	if applied {
-		if err := doc.adoptWorkCopy(doc.SourcePath); err != nil {
-			return nil, err
-		}
+
+	// 用新的工作版本原子替换原文件。
+	// atomicWrite 内部先写临时文件再 rename，失败时原文件保持不变。
+	if err := atomicWrite(doc.SourcePath, doc.WorkPath); err != nil {
+		return nil, err
 	}
 	return doc.docInfo(), nil
 }
