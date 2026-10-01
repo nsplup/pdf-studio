@@ -174,8 +174,42 @@ func (d *Document) nextVersion() string {
 	return d.store.ws.NewVersionPath(d.ID, d.version.Add(1))
 }
 
-// docInfo 组装给前端的文档信息。
+// pageSnapshot 在锁内取得的一次性页面状态，用于后续锁外渲染。
+type pageSnapshot struct {
+	workPath  string
+	pageCount int
+	version   int64
+}
+
+// snapshot 持锁获取页面状态快照。渲染类调用者应使用快照字段，
+// 不要直接读 d.WorkPath / d.PageCount，避免与写操作并发。
+func (d *Document) snapshot() pageSnapshot {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return pageSnapshot{
+		workPath:  d.WorkPath,
+		pageCount: d.PageCount,
+		version:   d.version.Load(),
+	}
+}
+
+// versionUnchanged 无锁判断当前版本是否仍等于快照时的版本。
+// 版本在每次 nextVersion() 时递增，覆盖所有会改变页面内容的写操作。
+func (d *Document) versionUnchanged(v int64) bool {
+	return d.version.Load() == v
+}
+
+// docInfo 组装给前端的文档信息。适用于无锁调用方（自动加锁）。
 func (d *Document) docInfo() *DocInfo {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.docInfoLocked()
+}
+
+// docInfoLocked 与 docInfo 相同，但要求调用方已持有 d.mu。
+// 所有已经在 doc.mu 保护下执行的写操作（Save/SaveAs/Insert/Delete/Move 等）
+// 必须调用本方法，否则会死锁。
+func (d *Document) docInfoLocked() *DocInfo {
 	pages := make([]PageDim, 0, len(d.Dims))
 	for _, dim := range d.Dims {
 		pages = append(pages, PageDim{Width: dim.Width, Height: dim.Height})
@@ -197,5 +231,4 @@ func (d *Document) docInfo() *DocInfo {
 		info.PageRes = append([]string(nil), d.res...)
 	}
 	return info
-
 }

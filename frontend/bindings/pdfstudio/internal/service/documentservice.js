@@ -201,6 +201,10 @@ export function PlaceBuffer(id, atIndex, before) {
 
 /**
  * Save 保存到原始文件（合并辅助数据；临时文件 + 原子替换，避免写坏原文件）。
+ * 
+ * 顺序：mergeAux → adoptWorkCopy → atomicWrite。
+ * 先接纳新工作版本再写原文件，保证即便写原文件失败，会话状态也自洽：
+ * WorkPath 反映合并后的内容，下次保存不会基于旧内容重新装配。
  * @param {string} id
  * @param {$models.SaveOptions | null} opts
  * @returns {$CancellablePromise<$models.DocInfo | null>}
@@ -214,6 +218,10 @@ export function Save(id, opts) {
 /**
  * SaveAs 另存为新文件：合并辅助数据后写临时文件原子替换，
  * 并把会话切换到目标文件（后续 Save 写回目标；docInfo 返回新路径与文件名）。
+ * 
+ * 顺序与 Save 一致：mergeAux → adoptWorkCopy → atomicWrite(target)。
+ * 先接纳新工作版本再写目标文件，失败时目标文件保持不变，
+ * 会话 WorkPath 已自洽，用户可重试。
  * @param {string} id
  * @param {string} targetPath
  * @param {$models.SaveOptions | null} opts

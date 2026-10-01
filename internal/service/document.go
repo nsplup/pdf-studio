@@ -89,11 +89,6 @@ func (s *DocumentService) GenerateThumbnails(id string, width int, fromPage int)
 	return taskID, nil
 }
 
-// InsertBlankPages 在 pageIndex 页前/后插入 count 张空白页。
-// 空白页尺寸自动匹配锚点页（1-based；pageIndex 可为 PageCount+1 追加到末尾）。
-// DeletePages 删除页面选择表达式指定的页（如 "2,5-7"）。
-// PageThumbnail 同步渲染单页大图（用于预览浮层），返回可访问 URL。
-// 缓存于 <thumbs>/big-p<N>.png；文件随重排被清理后在下次请求时重渲染。
 func (s *DocumentService) PageThumbnail(id string, pageNr, width int) (string, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
@@ -102,8 +97,9 @@ func (s *DocumentService) PageThumbnail(id string, pageNr, width int) (string, e
 	if width <= 0 || width > 1400 {
 		width = 900
 	}
-	if pageNr < 1 || pageNr > doc.PageCount {
-		return "", NewErr("INVALID_PARAM", fmt.Sprintf("页码 %d 超出范围 (1-%d)", pageNr, doc.PageCount))
+	snap := doc.snapshot()
+	if pageNr < 1 || pageNr > snap.pageCount {
+		return "", NewErr("INVALID_PARAM", fmt.Sprintf("页码 %d 超出范围 (1-%d)", pageNr, snap.pageCount))
 	}
 	out := filepath.Join(s.store.ws.ThumbsDir(id), fmt.Sprintf("big-p%d.png", pageNr))
 	if _, err := os.Stat(out); err == nil {
@@ -112,21 +108,33 @@ func (s *DocumentService) PageThumbnail(id string, pageNr, width int) (string, e
 	if err := os.MkdirAll(s.store.ws.ThumbsDir(id), 0o755); err != nil {
 		return "", WrapErr("THUMB_RENDER_FAILED", "创建缩略图目录失败", err)
 	}
-	if err := engine.RenderPagePNGToFile(doc.WorkPath, pageNr, width, out); err != nil {
-		_ = os.Remove(out)
+	// 渲染到临时文件，避免半写文件被误认为缓存命中。
+	tmp := out + ".tmp"
+	if err := engine.RenderPagePNGToFile(snap.workPath, pageNr, width, tmp); err != nil {
+		_ = os.Remove(tmp)
 		return "", WrapErr("THUMB_RENDER_FAILED", "渲染预览失败", err)
+	}
+	// 渲染期间文档被改写：丢弃结果，让前端按新状态重试。
+	if !doc.versionUnchanged(snap.version) {
+		_ = os.Remove(tmp)
+		return "", NewErr("DOC_CHANGED", "文档已修改，请重试")
+	}
+	_ = os.Remove(out)
+	if err := os.Rename(tmp, out); err != nil {
+		_ = os.Remove(tmp)
+		return "", WrapErr("THUMB_RENDER_FAILED", "保存预览失败", err)
 	}
 	return "/thumbs/" + id + "/big-p" + fmt.Sprint(pageNr) + ".png", nil
 }
 
-// EnsurePageThumb 确保第 page 页的 180px 缩略图存在，缺失则同步渲染（自愈）。
 func (s *DocumentService) EnsurePageThumb(id string, page int) error {
 	doc, err := s.store.Get(id)
 	if err != nil {
 		return err
 	}
-	if page < 1 || page > doc.PageCount {
-		return NewErr("INVALID_PARAM", fmt.Sprintf("页码 %d 超出范围 (1-%d)", page, doc.PageCount))
+	snap := doc.snapshot()
+	if page < 1 || page > snap.pageCount {
+		return NewErr("INVALID_PARAM", fmt.Sprintf("页码 %d 超出范围 (1-%d)", page, snap.pageCount))
 	}
 	out := filepath.Join(s.store.ws.ThumbsDir(id), fmt.Sprintf("p%d.png", page))
 	if _, err := os.Stat(out); err == nil {
@@ -135,13 +143,14 @@ func (s *DocumentService) EnsurePageThumb(id string, page int) error {
 	if err := os.MkdirAll(s.store.ws.ThumbsDir(id), 0o755); err != nil {
 		return err
 	}
-	doc.mu.Lock()
-	workPath := doc.WorkPath
-	doc.mu.Unlock()
 	tmp := out + ".tmp"
-	if err := engine.RenderPagePNGToFile(workPath, page, 180, tmp); err != nil {
+	if err := engine.RenderPagePNGToFile(snap.workPath, page, 180, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	if !doc.versionUnchanged(snap.version) {
+		_ = os.Remove(tmp)
+		return NewErr("DOC_CHANGED", "文档已修改，请重试")
 	}
 	_ = os.Remove(out)
 	return os.Rename(tmp, out)
@@ -213,7 +222,7 @@ func (s *DocumentService) InsertBlankPages(id string, atIndex, count int, before
 		}
 	}
 	_ = s.store.ws.RearrangeThumbs(doc.ID, doc.PageCount, perm, copyFrom)
-	return doc.docInfo(), nil
+	return doc.docInfoLocked(), nil
 }
 
 func (s *DocumentService) DeletePages(id, pages string) (*DocInfo, error) {
@@ -258,7 +267,7 @@ func (s *DocumentService) DeletePages(id, pages string) (*DocInfo, error) {
 		}
 	}
 	_ = s.store.ws.RearrangeThumbs(doc.ID, doc.PageCount, perm, nil)
-	return doc.docInfo(), nil
+	return doc.docInfoLocked(), nil
 }
 
 // SaveOptions 保存时的辅助数据合并选项。
@@ -313,7 +322,7 @@ func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*Doc
 
 	doc.SourcePath = targetPath
 
-	return doc.docInfo(), nil
+	return doc.docInfoLocked(), nil
 }
 
 // Save 保存到原始文件（合并辅助数据；临时文件 + 原子替换，避免写坏原文件）。
@@ -349,7 +358,7 @@ func (s *DocumentService) Save(id string, opts *SaveOptions) (*DocInfo, error) {
 	if err := atomicWrite(doc.SourcePath, doc.WorkPath); err != nil {
 		return nil, err
 	}
-	return doc.docInfo(), nil
+	return doc.docInfoLocked(), nil
 }
 
 // mergeAux 工作版本 -> out：依次合并书签、页标签、附件会话（链式中间文件）。
@@ -541,7 +550,7 @@ func (s *DocumentService) MovePages(id, pages string, atIndex int, before bool) 
 		perm[k+1] = old
 	}
 	_ = s.store.ws.RearrangeThumbs(doc.ID, total, perm, nil)
-	return doc.docInfo(), nil
+	return doc.docInfoLocked(), nil
 }
 
 // ImportRequest 批量导入请求：混合 PDF 与图片，按给定顺序合成待放置内容。
@@ -753,7 +762,7 @@ func (s *DocumentService) AbsorbBufferAux(id string, atIndex int, before bool) (
 
 // absorbAuxLocked 读取缓冲区来源 PDF 的书签/页标签/附件并平移合并进文档会话。
 func (s *DocumentService) absorbAuxLocked(doc *Document, buf *ImportBuffer, insertOffset int) *PlaceResult {
-	res := &PlaceResult{Info: doc.docInfo()}
+	res := &PlaceResult{Info: doc.docInfoLocked()}
 	// 1) 书签：缓冲区 PDF 已合并各来源书签（页码相对缓冲区），整体平移
 	if bms, berr := engine.ReadBookmarks(buf.PDFPath); berr == nil && len(bms) > 0 {
 		nodes := fromEngineBookmarks(bms)
