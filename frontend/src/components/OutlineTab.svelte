@@ -16,6 +16,9 @@
     labelBase,
     toViewPage,
     fromViewPage,
+    outlineProblems,
+    type AppProblem,
+    type BookmarkProblem,
   } from "../stores";
   import * as UI from "./ui";
   import TreeNode, { type EditNode } from "./TreeNode.svelte";
@@ -26,12 +29,9 @@
     FileOutput,
     FileQuestion,
     Type,
-    ScrollText,
-    X,
-    CheckCircle2,
-    TriangleAlert,
-    ArrowDownUp,
+    TriangleAlert, // 清空确认弹窗还在用
   } from "lucide-svelte";
+  // 移除 ScrollText / X / CheckCircle2 / ArrowDownUp
 
   let { pageCount = null as number | null } = $props();
   let doc = $derived($currentDoc);
@@ -278,16 +278,7 @@
     );
   });
 
-  // ---------- 书签校验（pdfcpu 不接受逆序/越界书签，前端先行校验） ----------
 
-  export interface BookmarkProblem {
-    kind: "range" | "order";
-    title: string;
-    page: number;
-    detail: string;
-    /** 写入序列序号（0 基），文本模式下对应第 order 条带页码的行 */
-    order: number;
-  }
 
   /**
    * 深度优先遍历出写入序列后校验：
@@ -355,13 +346,24 @@
   let problems = $derived(validation.problems);
   let invalidSet = $derived(validation.invalid);
 
-  let showLog = $state(false);
-
-  /** 供 App 保存前调用：返回问题列表（空 = 通过） */
-  export function validate(): BookmarkProblem[] {
-    if (loadedPath !== doc?.sourcePath) return [];
-    return problems;
-  }
+  // 把书签校验问题注册到全局，供 App 汇总展示
+  $effect(() => {
+    if (loadedPath !== doc?.sourcePath) {
+      outlineProblems.set([]);
+      return;
+    }
+    outlineProblems.set(
+      problems.map(
+        (p): AppProblem => ({
+          source: "outline",
+          kind: p.kind,
+          title: p.title,
+          detail: p.detail,
+          tab: "outline",
+        }),
+      ),
+    );
+  });
 
   // ---------- 供 App 调用的接口 ----------
 
@@ -518,21 +520,6 @@
           <Trash2 class="h-4 w-4" /> 清空书签
         </UI.Button>
         <div class="flex items-center gap-2">
-          <UI.Button
-            variant={problems.length ? "secondary" : "outline"}
-            onclick={() => (showLog = true)}
-            disabled={busy}
-          >
-            <ScrollText class="h-4 w-4" />
-            日志
-            {#if problems.length}
-              <span
-                class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
-              >
-                {problems.length}
-              </span>
-            {/if}
-          </UI.Button>
           <UI.Button variant="outline" onclick={exportText} disabled={busy}>
             <FileOutput class="h-4 w-4" /> 导出书签文本
           </UI.Button>
@@ -540,64 +527,6 @@
       </UI.CardFooter>
     </UI.Card>
   </div>
-
-  {#if showLog}
-    <!-- svelte-ignore a11y_interactive_supports_focus -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div
-      class="log-overlay"
-      role="dialog"
-      aria-modal="true"
-      onclick={(e) => e.target === e.currentTarget && (showLog = false)}
-    >
-      <div class="log-card">
-        <div
-          class="flex items-center justify-between border-b border-border px-4 py-3"
-        >
-          <h3 class="flex items-center gap-2 text-sm font-medium">
-            <ScrollText class="h-4 w-4" /> 书签校验日志
-          </h3>
-          <button class="pv-btn" onclick={() => (showLog = false)}
-            ><X class="h-4 w-4" /></button
-          >
-        </div>
-        <div class="max-h-[50vh] overflow-y-auto px-4 py-3">
-          {#if problems.length === 0}
-            <div
-              class="flex items-center gap-2 py-6 text-sm text-muted-foreground"
-            >
-              <CheckCircle2 class="h-4 w-4 text-emerald-500" /> 未检测到问题
-            </div>
-          {:else}
-            <ul class="flex flex-col gap-2">
-              {#each problems as p, i}
-                <li class="flex items-start gap-2 px-3 py-2 text-sm">
-                  {#if p.kind === "order"}
-                    <ArrowDownUp
-                      class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
-                    />
-                  {:else}
-                    <TriangleAlert
-                      class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
-                    />
-                  {/if}
-                  <div>
-                    <div class="font-medium">{p.title}</div>
-                    <div class="text-xs text-muted-foreground">{p.detail}</div>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-        <div class="flex justify-end border-t border-border px-4 py-3">
-          <UI.Button variant="outline" onclick={() => (showLog = false)}
-            >关闭</UI.Button
-          >
-        </div>
-      </div>
-    </div>
-  {/if}
 
   {#if showClearConfirm}
     <div class="log-overlay" role="alertdialog" aria-modal="true">

@@ -1,6 +1,14 @@
 <script lang="ts">
   import { MetaService, type PageLabel } from "../bindings/services";
-  import { currentDoc, notify, labelBase } from "../stores";
+  import {
+    currentDoc,
+    notify,
+    labelBase,
+    labelProblems,
+    type AppProblem,
+    type LabelRow,
+    type LabelProblem,
+  } from "../stores";
   import * as UI from "./ui";
   import {
     Trash2,
@@ -8,6 +16,7 @@
     Plus,
     TableProperties,
     FileQuestion,
+    TriangleAlert,
   } from "lucide-svelte";
 
   let { pageCount = null as number | null } = $props();
@@ -23,6 +32,13 @@
   /** 基准区间行索引（radio 单选；-1 = 无基准）。仅影响书签视图页码显示，不写入 PDF */
   let baseIdx = $state(-1);
   let busy = $state(false);
+
+  /** index → 该行的问题（每条规则最多命中一条，可直接映射） */
+  let problemByIndex = $derived.by(() => {
+    const m = new Map<number, LabelProblem>();
+    for (const p of labelProbs) m.set(p.index, p);
+    return m;
+  });
 
   // 基准区间 → 共享偏移状态：显示页码 = 实际页码 - offset（基准页显示为该区间起始编号）
   function syncBaseStore() {
@@ -73,9 +89,8 @@
   }
 
   function addLabel() {
-    const nextStart = labels.length
-      ? Math.min(total, labels[labels.length - 1].startPage + 1)
-      : 1;
+    const last = labels.length ? labels[labels.length - 1].startPage : 0;
+    const nextStart = Math.min(total, last + 1);
     labels = [
       ...labels,
       { startPage: nextStart, prefix: "", style: "D", startValue: 1 },
@@ -112,6 +127,62 @@
       if (labels[baseIdx] === l) syncBaseStore();
     }
   }
+
+  /** 校验：起始页需在 [1, total]，且必须严格递增（不能相等、不能逆序） */
+  function computeLabelProblems(
+    rows: LabelRow[],
+    total: number,
+  ): LabelProblem[] {
+    if (total <= 0) return [];
+    const problems: LabelProblem[] = [];
+    let prevStart = -Infinity;
+    let prevIdx = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const cur = rows[i].startPage;
+      if (!Number.isFinite(cur) || cur < 1 || cur > total) {
+        problems.push({
+          kind: "range",
+          title: `第 ${i + 1} 个区间`,
+          detail: `起始页 ${Number.isFinite(cur) ? cur : "无效"} 超出范围 [1, ${total}]`,
+          index: i,
+        });
+        continue;
+      }
+      if (cur <= prevStart) {
+        const reason =
+          cur === prevStart
+            ? `起始页 ${cur} 与第 ${prevIdx + 1} 个区间相等`
+            : `起始页 ${cur} 小于第 ${prevIdx + 1} 个区间的 ${prevStart}`;
+        problems.push({
+          kind: "order",
+          title: `第 ${i + 1} 个区间`,
+          detail: `${reason}；起始页必须严格递增`,
+          index: i,
+        });
+      }
+      if (cur > prevStart) {
+        prevStart = cur;
+        prevIdx = i;
+      }
+    }
+    return problems;
+  }
+
+  let labelProbs = $derived(computeLabelProblems(labels, total));
+
+  $effect(() => {
+    labelProblems.set(
+      labelProbs.map(
+        (p): AppProblem => ({
+          source: "labels",
+          kind: p.kind,
+          title: p.title,
+          detail: p.detail,
+          tab: "labels",
+        }),
+      ),
+    );
+  });
 
   // ---------- 供 App 调用的接口 ----------
 
@@ -195,11 +266,12 @@
           </div>
         {:else if labels.length}
           <div class="-mx-1 overflow-x-auto px-1 pb-1">
-            <div class="min-w-[47rem] text-sm">
+            <div class="min-w-[48.75rem] text-sm">
               <!-- 表头 -->
               <div
-                class="grid grid-cols-[7.5rem_minmax(10rem,1fr)_12rem_7.5rem_5rem_2.25rem] items-center gap-x-2 border-b border-border pb-1.5 text-xs font-medium text-muted-foreground"
+                class="grid grid-cols-[1.25rem_7.5rem_minmax(10rem,1fr)_12rem_7.5rem_5rem_2.25rem] items-center gap-x-2 border-b border-border pb-1.5 text-xs font-medium text-muted-foreground"
               >
+                <div></div>
                 <div>起始页</div>
                 <div>前缀</div>
                 <div>编号风格</div>
@@ -210,9 +282,19 @@
               <!-- 数据行 -->
               <div class="divide-y divide-border/60">
                 {#each labels as l, i (i)}
+                  {@const p = problemByIndex.get(i)}
                   <div
-                    class="grid grid-cols-[7.5rem_minmax(10rem,1fr)_12rem_7.5rem_5rem_2.25rem] items-center gap-x-2 py-1.5"
+                    class="grid grid-cols-[1.25rem_7.5rem_minmax(10rem,1fr)_12rem_7.5rem_5rem_2.25rem] items-center gap-x-2 py-1.5"
                   >
+                    <!-- 行首警告列 -->
+                    <div class="flex items-center justify-center">
+                      {#if p}
+                        <span title={p.detail} aria-label={p.detail}>
+                          <TriangleAlert class="h-3.5 w-3.5 text-amber-600" />
+                        </span>
+                      {/if}
+                    </div>
+
                     <input
                       type="number"
                       min="1"
@@ -254,12 +336,7 @@
                       oninput={(e) => setNum(l, "startValue", e)}
                     />
 
-                    <!--
-                      基准：手写的「Toggle Group 式」单选按钮
-                      - 所有行共用 name="label-base"，原生 radio 即保证组内单选
-                      - input 视觉隐藏，label 做成按钮外观，选中时整块高亮
-                      - peer-checked:* 让选中态可被 Tailwind 感知（label 是 input 的兄弟）
-                    -->
+                    <!-- 基准 radio（保持原样） -->
                     <div class="flex items-center justify-center">
                       <input
                         id="label-base-{i}"
@@ -273,9 +350,9 @@
                         for="label-base-{i}"
                         title="将此区间的页码计算规则应用到书签视图"
                         class="flex h-8 w-full cursor-pointer select-none items-center justify-center rounded-md border border-input text-xs text-muted-foreground transition-colors
-                               hover:border-primary/40 hover:bg-accent hover:text-foreground
-                               peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:font-medium peer-checked:text-primary
-                               peer-focus-visible:ring-2 peer-focus-visible:ring-primary/50"
+               hover:border-primary/40 hover:bg-accent hover:text-foreground
+               peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:font-medium peer-checked:text-primary
+               peer-focus-visible:ring-2 peer-focus-visible:ring-primary/50"
                       >
                         {baseIdx === i ? "当前基准" : "设为基准"}
                       </label>

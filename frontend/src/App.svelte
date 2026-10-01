@@ -21,6 +21,9 @@
     placement,
     notify,
     waitTask,
+    outlineProblems,
+    labelProblems,
+    type AppProblem,
   } from "./stores";
   import ThumbGrid from "./components/ThumbGrid.svelte";
   import OutlineTab from "./components/OutlineTab.svelte";
@@ -43,6 +46,8 @@
     X,
     Move,
     FileQuestion,
+    TriangleAlert,
+    ArrowDownUp,
   } from "lucide-svelte";
 
   type Tab = "thumbs" | "outline" | "labels" | "attachments";
@@ -64,6 +69,12 @@
 
   let doc = $derived($currentDoc);
   let placing = $derived($placement.active);
+
+  let allProblems = $derived<AppProblem[]>([
+    ...$outlineProblems,
+    ...$labelProblems,
+  ]);
+  let showProblems = $state(false);
 
   /** 打开 PDF（按路径复用全局会话） */
   async function openFile() {
@@ -160,13 +171,9 @@
 
   async function doSave() {
     if (!doc) return;
-    const problems = outlineTab?.validate() ?? [];
-    if (problems.length) {
-      notify(
-        "err",
-        `书签校验未通过（${problems.length} 项），见书签页「日志」`,
-      );
-      tab = "outline";
+    if (allProblems.length) {
+      // 理论上进不来（按钮已被替换），保留兜底
+      showProblems = true;
       return;
     }
     busy = true;
@@ -183,13 +190,8 @@
 
   async function doSaveAs() {
     if (!doc) return;
-    const problems = outlineTab?.validate() ?? [];
-    if (problems.length) {
-      notify(
-        "err",
-        `书签校验未通过（${problems.length} 项），见书签页「日志」`,
-      );
-      tab = "outline";
+    if (allProblems.length) {
+      showProblems = true;
       return;
     }
     const out = await pickSavePDF(
@@ -378,12 +380,28 @@
       <span class="text-sm text-muted-foreground">未打开文档</span>
     {/if}
     <span class="flex-1"></span>
-    <UI.Button variant="outline" onclick={doSave} disabled={busy || !doc}>
-      <Save class="h-4 w-4" /> 保存
-    </UI.Button>
-    <UI.Button variant="outline" onclick={doSaveAs} disabled={busy || !doc}>
-      <Download class="h-4 w-4" /> 另存为
-    </UI.Button>
+    {#if allProblems.length}
+      <UI.Button
+        variant="secondary"
+        onclick={() => (showProblems = true)}
+        title="存在校验问题，请先处理"
+      >
+        <TriangleAlert class="h-4 w-4 text-amber-600" />
+        问题
+        <span
+          class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
+        >
+          {allProblems.length}
+        </span>
+      </UI.Button>
+    {:else}
+      <UI.Button variant="outline" onclick={doSave} disabled={busy || !doc}>
+        <Save class="h-4 w-4" /> 保存
+      </UI.Button>
+      <UI.Button variant="outline" onclick={doSaveAs} disabled={busy || !doc}>
+        <Download class="h-4 w-4" /> 另存为
+      </UI.Button>
+    {/if}
   </header>
 
   <!-- 放置模式提示条 -->
@@ -502,6 +520,72 @@
 </div>
 
 <TaskOverlay />
+{#if showProblems}
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="log-overlay"
+    role="dialog"
+    aria-modal="true"
+    onclick={(e) => e.target === e.currentTarget && (showProblems = false)}
+  >
+    <div class="log-card">
+      <div
+        class="flex items-center justify-between border-b border-border px-4 py-3"
+      >
+        <h3 class="flex items-center gap-2 text-sm font-medium">
+          <TriangleAlert class="h-4 w-4 text-amber-600" /> 校验问题
+          <span class="text-xs font-normal text-muted-foreground">
+            （{allProblems.length} 项，点击可跳转对应页处理）
+          </span>
+        </h3>
+        <button class="pv-btn" onclick={() => (showProblems = false)}>
+          <X class="h-4 w-4" />
+        </button>
+      </div>
+      <div class="max-h-[50vh] overflow-y-auto px-2 py-2">
+        <ul class="flex flex-col gap-1">
+          {#each allProblems as p, i (i)}
+            <li>
+              <button
+                type="button"
+                class="flex w-full items-start gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                onclick={() => {
+                  tab = p.tab;
+                  showProblems = false;
+                }}
+              >
+                {#if p.kind === "order"}
+                  <ArrowDownUp class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                {:else}
+                  <TriangleAlert
+                    class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                  />
+                {/if}
+                <div class="flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium">{p.title}</span>
+                    <span
+                      class="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                    >
+                      {p.source === "outline" ? "书签" : "页标签"}
+                    </span>
+                  </div>
+                  <div class="text-xs text-muted-foreground">{p.detail}</div>
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+      <div class="flex justify-end border-t border-border px-4 py-3">
+        <UI.Button variant="outline" onclick={() => (showProblems = false)}>
+          关闭
+        </UI.Button>
+      </div>
+    </div>
+  </div>
+{/if}
 <Toasts />
 
 <style>
@@ -509,5 +593,35 @@
     opacity: 0.25;
     pointer-events: none;
     filter: grayscale(0.4);
+  }
+  .log-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(0 0 0 / 0.5);
+  }
+  .log-card {
+    width: min(560px, 92vw);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+  }
+  .pv-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: hsl(var(--muted-foreground));
+  }
+  .pv-btn:hover {
+    background: hsl(var(--accent));
+    color: hsl(var(--foreground));
   }
 </style>

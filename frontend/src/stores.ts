@@ -27,6 +27,42 @@ export function notify(kind: Toast["kind"], text: string) {
   }, 4500);
 }
 
+// ---------- 全局校验问题 ----------
+// 子页面把自己派生出的校验问题注册进来；App 汇总后据此用「问题」按钮
+// 替换「保存 / 另存为」。加载未完成、文档切换时应清空自己那一份。
+
+export interface BookmarkProblem {
+  kind: "range" | "order";
+  title: string;
+  page: number;
+  detail: string;
+  /** 写入序列序号（0 基），文本模式下对应第 order 条带页码的行 */
+  order: number;
+}
+export interface LabelRow {
+  startPage: number;
+  prefix: string;
+  style: string;
+  startValue: number;
+}
+export interface LabelProblem {
+  kind: "range" | "order";
+  title: string;
+  detail: string;
+  index: number;
+}
+export interface AppProblem {
+  source: "outline" | "labels";
+  kind: "range" | "order";
+  title: string;
+  detail: string;
+  /** 点击问题时的跳转目标 */
+  tab: "outline" | "labels";
+}
+
+export const outlineProblems = writable<AppProblem[]>([]);
+export const labelProblems = writable<AppProblem[]>([]);
+
 // ---------- 共享文档会话缓存 ----------
 // 同一文件在所有功能页共享一个会话；页面编辑后的 DocInfo 全局同步。
 
