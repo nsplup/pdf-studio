@@ -24,6 +24,7 @@
   /** 逻辑页数（含未保存的插入/删除） */
   let total = $derived(pageCount ?? 0);
   let loadedKey = $state("");
+  let attemptedKey = $state("");
   /** UI 内使用 1-based 起始页；保存时转回 0-based */
   let labels = $state<
     { startPage: number; prefix: string; style: string; startValue: number }[]
@@ -62,8 +63,8 @@
   $effect(() => {
     const d = doc;
     const key = d ? d.sourcePath : "";
-    if (!key || key === loadedKey) return;
-    loadedKey = key;
+    if (!key || key === attemptedKey) return;
+    attemptedKey = key;
     void load(key);
   });
 
@@ -80,8 +81,10 @@
         startValue: l.startValue ?? 1,
       }));
       autoSelectBase(raw);
+      loadedKey = path;
     } catch (e: any) {
       labels = [];
+      loadedKey = "";
       notify("err", `读取页标签失败：${e?.message ?? e}`);
     } finally {
       busy = false;
@@ -230,6 +233,10 @@
   /** 导入放置后合并来源 PDF 的页标签区间（0-based；内部转 1-based 存储） */
   export function mergeLabels(added: PageLabel[]) {
     if (!added?.length) return;
+    if (loadedKey !== doc?.sourcePath) {
+      notify("err", "页标签未成功加载，导入内容中的页标签未合并");
+      return;
+    }
     const map = new Map<number, PageLabel>();
     for (const l of labels) {
       map.set(l.startPage - 1, {
@@ -252,6 +259,10 @@
     touched = true;
     // 合并后行序可能变化，重新按 /D 规则选定基准
     autoSelectBase(labels.map((l) => ({ ...l, startPage: l.startPage - 1 })));
+  }
+
+  export function retryLabels() {
+    attemptedKey = "";
   }
 </script>
 
@@ -403,6 +414,11 @@
                 {/each}
               </div>
             </div>
+          </div>
+        {:else if loadedKey !== doc?.sourcePath}
+          <div class="empty-sm">
+            读取页标签失败，保存时将不修改页标签。
+            <button class="underline" onclick={retryLabels}>重试</button>
           </div>
         {:else}
           <div class="empty-sm">该文档没有页标签</div>

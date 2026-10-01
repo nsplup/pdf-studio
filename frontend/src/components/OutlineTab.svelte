@@ -41,6 +41,7 @@
   let base = $derived($labelBase);
   let off = $derived(base.offset);
   let loadedPath = $state("");
+  let attemptedPath = $state("");
   let tree = $state<EditNode[]>([]);
   let busy = $state(false);
   let mode = $state<"tree" | "text">("tree");
@@ -74,12 +75,12 @@
   });
 
   $effect(() => {
-    void doc;
-    if (doc && doc.sourcePath !== loadedPath) {
-      const path = doc.sourcePath;
-      loadedPath = path;
-      load(path);
-    }
+    const d = doc;
+    if (!d) return;
+    const path = d.sourcePath;
+    if (path === attemptedPath) return;
+    attemptedPath = path;
+    void load(path);
   });
 
   async function load(path: string) {
@@ -87,8 +88,14 @@
     try {
       const nodes = (await OutlineService.Read(path)) ?? [];
       tree = toEdit(nodes);
-    } catch {
+      // 只有成功才置位；失败时保持旧值，getTree() 返回 undefined = 不修改
+      loadedPath = path;
+    } catch (e: any) {
+      // 展示层清空，但不代表“用户要清空书签”。
+      // 关键：不写 loadedPath，保存时 getTree() 返回 undefined。
       tree = [];
+      loadedPath = "";
+      notify("err", `读取书签失败：${e?.message ?? e}`);
     } finally {
       busy = false;
     }
@@ -373,8 +380,17 @@
 
   /** 导入放置后追加合并的书签（页码已由后端平移） */
   export function addNodes(nodes: OutlineNode[]) {
+    if (!nodes?.length) return;
+    if (loadedPath !== doc?.sourcePath) {
+      notify("err", "书签未成功加载，导入内容中的书签未合并");
+      return;
+    }
     tree = [...tree, ...toEdit(nodes)];
     if (mode === "text") textValue = serialize(tree);
+  }
+
+  export function retryOutline() {
+    attemptedPath = "";
   }
 
   /** 清空（待全局保存时生效）；应用内 confirm 弹窗二次确认 */
@@ -476,7 +492,16 @@
         </UI.CardTitle>
       </UI.CardHeader>
       <UI.CardContent>
-        {#if mode === "text"}
+        {#if busy && !tree.length}
+          <div class="empty">
+            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取书签
+          </div>
+        {:else if tree.length === 0 && loadedPath !== doc?.sourcePath}
+          <div class="empty-sm">
+            读取书签失败，保存时将不修改书签。
+            <button class="underline" onclick={retryOutline}>重试</button>
+          </div>
+        {:else if mode === "text"}
           <div
             bind:this={aceEl}
             class="ace-shell h-[calc(100vh-313px)] w-full overflow-hidden rounded-md border border-input"
@@ -484,10 +509,6 @@
           <p class="mt-2 text-xs text-muted-foreground">
             每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点
           </p>
-        {:else if busy && !tree.length}
-          <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取书签
-          </div>
         {:else}
           <div class="tree-wrap">
             {#each tree as node, i (i)}
@@ -502,7 +523,7 @@
                 onInsertBelow={(p) => insertSibling(p, 1)}
               />
             {/each}
-            {#if !tree.length}
+            {#if tree.length === 0}
               <div class="empty-sm">暂无书签，可在此处添加或导入后自动合并</div>
             {/if}
           </div>
