@@ -278,8 +278,6 @@
     );
   });
 
-
-
   /**
    * 深度优先遍历出写入序列后校验：
    * - 越界：页码不在 [1, maxPage] → 自身不通过；
@@ -494,7 +492,7 @@
           <div class="tree-wrap">
             {#each tree as node, i (i)}
               <TreeNode
-                {node}
+                bind:node={tree[i]}
                 path={[i]}
                 {onChanged}
                 {onRemove}
@@ -737,18 +735,5 @@
     border-radius: 10px;
     overflow: hidden;
     box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
-  }
-  .pv-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    color: hsl(var(--muted-foreground));
-  }
-  .pv-btn:hover {
-    background: hsl(var(--accent));
-    color: hsl(var(--foreground));
   }
 </style>

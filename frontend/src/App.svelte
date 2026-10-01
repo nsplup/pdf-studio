@@ -539,9 +539,6 @@
             （{allProblems.length} 项，点击可跳转对应页处理）
           </span>
         </h3>
-        <button class="pv-btn" onclick={() => (showProblems = false)}>
-          <X class="h-4 w-4" />
-        </button>
       </div>
       <div class="max-h-[50vh] overflow-y-auto px-2 py-2">
         <ul class="flex flex-col gap-1">
@@ -610,18 +607,5 @@
     border-radius: 10px;
     overflow: hidden;
     box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
-  }
-  .pv-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    color: hsl(var(--muted-foreground));
-  }
-  .pv-btn:hover {
-    background: hsl(var(--accent));
-    color: hsl(var(--foreground));
   }
 </style>

@@ -128,6 +128,37 @@
     }
   }
 
+  /** 失焦提交：空值按业务语义回退，越界值把钳制结果写回 DOM */
+  function commitNum(
+    l: { startPage: number; startValue: number },
+    key: "startPage" | "startValue",
+    ev: FocusEvent,
+  ) {
+    const el = ev.currentTarget as HTMLInputElement;
+    const raw = el.value.trim();
+    const v = parseInt(raw, 10);
+
+    // 空 / 非法：回退
+    if (raw === "" || !Number.isFinite(v)) {
+      if (key === "startValue") {
+        // startValue 空 → 业务默认 1
+        l.startValue = 1;
+        touched = true;
+        el.value = "1";
+        if (labels[baseIdx] === l) syncBaseStore();
+      } else {
+        // startPage 空 → 回退到上一个有效值（模型未变，Svelte 不会自动回写 DOM，需手写）
+        el.value = String(l.startPage);
+      }
+      return;
+    }
+
+    // 合法但越界：把钳制后的值写回 DOM，保持视觉一致
+    const clamped =
+      key === "startPage" ? Math.max(1, Math.min(total, v)) : Math.max(0, v);
+    if (clamped !== v) el.value = String(clamped);
+  }
+
   /** 校验：起始页需在 [1, total]，且必须严格递增（不能相等、不能逆序） */
   function computeLabelProblems(
     rows: LabelRow[],
@@ -235,7 +266,7 @@
           <div>
             <span class="mr-1 inline-block min-w-16 font-medium text-foreground"
               >起始页</span
-            >本规则从第几页开始生效（1–{total}），需大于上一区间
+            >本规则从第几页开始生效（1–{total}），需大于之前的区间
           </div>
           <div>
             <span class="mr-1 inline-block min-w-16 font-medium text-foreground"
@@ -302,6 +333,7 @@
                       class="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm"
                       value={l.startPage}
                       oninput={(e) => setNum(l, "startPage", e)}
+                      onblur={(e) => commitNum(l, "startPage", e)}
                     />
                     <input
                       type="text"
@@ -334,6 +366,7 @@
                       class="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm"
                       value={l.startValue}
                       oninput={(e) => setNum(l, "startValue", e)}
+                      onblur={(e) => commitNum(l, "startValue", e)}
                     />
 
                     <!-- 基准 radio（保持原样） -->

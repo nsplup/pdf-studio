@@ -20,7 +20,7 @@
   }
 
   let {
-    node,
+    node = $bindable(),
     path = [],
     depth = 0,
     invalidSet = null as Set<EditNode> | null,
@@ -33,9 +33,7 @@
     node: EditNode;
     path?: number[];
     depth?: number;
-    /** 校验不通过（越界/逆序）的节点集合，命中则警戒色高亮 */
     invalidSet?: Set<EditNode> | null;
-    /** 页标签基准页偏移（纯前端）：显示页码 = node.page - pageOffset，编辑回写时加回 */
     pageOffset?: number;
     onChanged: () => void;
     onRemove: (path: number[]) => void;
@@ -54,6 +52,26 @@
     if (phys !== null) {
       node.page = Math.max(1, phys);
       onChanged();
+    }
+  }
+
+  /** 失焦提交：空 / 非法输入回退到当前实际页码；合法输入回写规范化后的视图页码 */
+  function onPageBlur(ev: FocusEvent) {
+    const el = ev.currentTarget as HTMLInputElement;
+    const raw = el.value.trim();
+    const view = parseInt(raw, 10);
+
+    if (raw === "" || !Number.isFinite(view)) {
+      el.value = String(toViewPage(node.page, pageOffset));
+      return;
+    }
+
+    // 处理 5.5 → 5、越界 → 边界之类的规范化
+    const phys = fromViewPage(view, pageOffset);
+    if (phys === null || phys < 1) {
+      el.value = String(toViewPage(node.page, pageOffset));
+    } else {
+      el.value = String(toViewPage(phys, pageOffset));
     }
   }
 
@@ -97,18 +115,23 @@
       class="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       bind:value={node.title}
       oninput={onChanged}
+      onblur={() => {
+        if (!node.title.trim()) {
+          node.title = "无标题";
+          onChanged();
+        }
+      }}
     />
     <ArrowRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     <span class="shrink-0 text-xs text-muted-foreground">第</span>
     <input
       type="number"
       min={-pageOffset}
-      title={pageOffset
-        ? `视图页码（无 0 页；实际页码 = 输入值 + ${pageOffset}，负数另加 1）`
-        : undefined}
+      title={pageOffset ? `视图页码` : undefined}
       class="h-7 w-16 shrink-0 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       value={toViewPage(node.page, pageOffset)}
       oninput={setPageFromView}
+      onblur={onPageBlur}
     />
     <span class="shrink-0 text-xs text-muted-foreground">页</span>
     <button
@@ -139,7 +162,7 @@
   {#if node.expanded}
     {#each node.kids as kid, i (i)}
       <Self
-        node={kid}
+        bind:node={node.kids[i]}
         path={[...path, i]}
         depth={depth + 1}
         {invalidSet}
