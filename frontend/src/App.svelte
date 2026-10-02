@@ -128,20 +128,43 @@
     return Array.isArray(r) ? r.length : fallback;
   }
 
-  /** 解析 "1,3-5" 形式的页码串为有序数组 */
-  function parsePageSel(pages: string): number[] {
-    const out: number[] = [];
-    for (const seg of pages.split(",")) {
-      if (seg.includes("-")) {
-        const [a, b] = seg.split("-").map(Number);
-        if (Number.isFinite(a) && Number.isFinite(b))
-          for (let i = a; i <= b; i++) out.push(i);
+  /**
+   * 解析 "1,3-5" 形式的页码串为升序去重的有效页码数组。
+   * 严格校验：空段、非数字、0/负数、倒序区间、超出 [1,total] 均视为非法，
+   * 整体返回 null。调用方据此提示错误并中止操作，不再静默 no-op。
+   */
+  function parsePageSel(pages: string, total: number): number[] | null {
+    if (total < 1) return null;
+    const trimmed = pages.trim();
+    if (!trimmed) return null;
+
+    const out = new Set<number>();
+    for (const rawSeg of trimmed.split(",")) {
+      const seg = rawSeg.trim();
+      if (!seg) return null; // 空段：如 "1,,3"、末尾逗号
+
+      const dash = seg.indexOf("-");
+      if (dash >= 0) {
+        // 区间：只接受恰好一个 "-"，两侧均为纯数字
+        const aStr = seg.slice(0, dash).trim();
+        const bStr = seg.slice(dash + 1).trim();
+        if (seg.indexOf("-", dash + 1) >= 0) return null; // "1-2-3"
+        if (!/^\d+$/.test(aStr) || !/^\d+$/.test(bStr)) return null;
+        const a = parseInt(aStr, 10);
+        const b = parseInt(bStr, 10);
+        if (a < 1 || b < 1 || a > b) return null; // "3-1"、"0-3"
+        if (b > total) return null; // 越界
+        for (let i = a; i <= b; i++) out.add(i);
       } else {
-        const n = Number(seg);
-        if (Number.isFinite(n)) out.push(n);
+        if (!/^\d+$/.test(seg)) return null; // "abc"、"+1"、"1.5"
+        const n = parseInt(seg, 10);
+        if (n < 1 || n > total) return null;
+        out.add(n);
       }
     }
-    return out.sort((x, y) => x - y);
+
+    if (out.size === 0) return null;
+    return [...out].sort((x, y) => x - y);
   }
 
   // ---------- 工具栏 ----------
@@ -457,19 +480,31 @@
             const res = $pageRes[doc.id];
             const dims = $pageDims[doc.id];
             if (!Array.isArray(res) || !Array.isArray(dims)) return;
-            const del = new Set(parsePageSel(pages));
+
+            const total = res.length;
+            const sel = parsePageSel(pages, total);
+            if (sel === null) {
+              notify(
+                "err",
+                `页码格式无效：请输入如 1,3-5 的形式，范围须在 1-${total} 内，且区间起始不大于结束`,
+              );
+              return;
+            }
+
+            const del = new Set(sel);
             const next = res.filter((_, i) => !del.has(i + 1));
             if (!next.length) {
               notify("err", "不能删除全部页面");
               return;
             }
+
             replacePageRes(doc.id, next);
             replacePageDims(
               doc.id,
               dims.filter((_, i) => !del.has(i + 1)),
             );
             selected = new Set();
-            notify("ok", "已删除所选页面");
+            notify("ok", `已删除 ${sel.length} 页`);
           }}
           {placing}
           buffer={$placement.buffer}
