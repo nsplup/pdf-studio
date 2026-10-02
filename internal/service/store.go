@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv" // 新增
 	"sync"
 	"sync/atomic"
 
@@ -206,6 +207,40 @@ func (d *Document) docInfo() *DocInfo {
 	return d.docInfoLocked()
 }
 
+// hasAllPageThumbsLocked 判断 p1.png..pN.png 是否全部存在。
+// 只看 p<正整数>.png 形式的条目，忽略 big-pN.png、*.tmp 等额外文件。
+// 要求调用方已持有 d.mu。
+func (d *Document) hasAllPageThumbsLocked() bool {
+	if d.PageCount <= 0 {
+		return false
+	}
+	entries, err := os.ReadDir(d.store.ws.ThumbsDir(d.ID))
+	if err != nil {
+		return false
+	}
+	present := make(map[int]struct{}, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if len(name) < 3 || name[0] != 'p' || name[len(name)-4:] != ".png" {
+			continue
+		}
+		n, err := strconv.Atoi(name[1 : len(name)-4])
+		if err != nil || n < 1 {
+			continue
+		}
+		present[n] = struct{}{}
+	}
+	for p := 1; p <= d.PageCount; p++ {
+		if _, ok := present[p]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // docInfoLocked 与 docInfo 相同，但要求调用方已持有 d.mu。
 // 所有已经在 doc.mu 保护下执行的写操作（Save/SaveAs/Insert/Delete/Move 等）
 // 必须调用本方法，否则会死锁。
@@ -222,11 +257,7 @@ func (d *Document) docInfoLocked() *DocInfo {
 		Pages:      pages,
 		DocVer:     d.version.Load(),
 	}
-	if st, err := os.Stat(d.store.ws.ThumbsDir(d.ID)); err == nil && st.IsDir() {
-		if entries, err2 := os.ReadDir(d.store.ws.ThumbsDir(d.ID)); err2 == nil && len(entries) == d.PageCount {
-			info.HasThumbs = true
-		}
-	}
+	info.HasThumbs = d.hasAllPageThumbsLocked()
 	if len(d.res) == d.PageCount {
 		info.PageRes = append([]string(nil), d.res...)
 	}
