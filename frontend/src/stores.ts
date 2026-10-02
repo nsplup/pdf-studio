@@ -71,6 +71,26 @@ export const currentDoc = writable<DocInfo | null>(null);
 /** 页面内容资源序列：docID -> uuid[]（undefined = 未拉取，null = 拉取中）。内容寻址，无版本号 */
 export const pageRes = writable<Record<string, string[] | null | undefined>>({});
 
+/** 页面序列基线：成功加载 pageRes 时快照，用于判断是否有未保存的页面改动 */
+export const pageResBaseline = writable<Record<string, string[]>>({});
+
+export function snapshotPageRes(id: string, res: string[]) {
+  pageResBaseline.update((m) => ({ ...m, [id]: [...res] }));
+}
+
+// 新增：全局 dirty 快照，供 App 汇总、供 Go 侧通过 AppService 读取
+export const hasUnsavedChanges = writable(false);
+
+/** 各 Tab 的未保存状态；由子组件同步，App 汇总 */
+export const outlineDirty = writable(false);
+export const labelsDirty = writable(false);
+export const attachmentsDirty = writable(false);
+
+// 供 App.$effect 在汇总后调用
+export function refreshDirtyFlag(v: boolean) {
+  hasUnsavedChanges.set(v);
+}
+
 /** 写入文档的页面资源序列 */
 export function setPageRes(id: string, res: string[] | null) {
   pageRes.update((m) => ({ ...m, [id]: res }));

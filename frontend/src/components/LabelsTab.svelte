@@ -5,6 +5,7 @@
     notify,
     labelBase,
     labelProblems,
+    labelsDirty,
     type AppProblem,
     type LabelRow,
     type LabelProblem,
@@ -12,10 +13,10 @@
   import * as UI from "./ui";
   import {
     Trash2,
-    Loader2,
+    Loader,
     Plus,
     TableProperties,
-    FileQuestion,
+    FileQuestionMark,
     TriangleAlert,
   } from "lucide-svelte";
 
@@ -39,6 +40,10 @@
     const m = new Map<number, LabelProblem>();
     for (const p of labelProbs) m.set(p.index, p);
     return m;
+  });
+
+  $effect(() => {
+    labelsDirty.set(touched);
   });
 
   // 基准区间 → 共享偏移状态：显示页码 = 实际页码 - offset（基准页显示为该区间起始编号）
@@ -264,6 +269,16 @@
   export function retryLabels() {
     attemptedKey = "";
   }
+
+  /** 是否有未保存的书签改动 */
+  export function isDirty(): boolean {
+    return touched;
+  }
+
+  /** 保存成功后由 App 调用，清除 dirty 标记 */
+  export function markClean() {
+    touched = false;
+  }
 </script>
 
 {#if doc}
@@ -304,7 +319,7 @@
       <UI.CardContent>
         {#if busy && !labels.length}
           <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取页标签
+            <Loader class="h-5 w-5 animate-spin" /> 正在读取页标签
           </div>
         {:else if labels.length}
           <div class="-mx-1 overflow-x-auto px-1 pb-1">
@@ -437,7 +452,7 @@
   <div
     class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
   >
-    <FileQuestion class="h-12 w-12" />
+    <FileQuestionMark class="h-12 w-12" />
     <p class="text-lg">打开 PDF 开始编辑</p>
   </div>
 {/if}

@@ -8,7 +8,7 @@
     ZoomIn,
     ZoomOut,
     RotateCcw,
-    Loader2,
+    Loader,
   } from "lucide-svelte";
 
   let {
@@ -149,7 +149,7 @@
       style="transform: translate({tx}px, {ty}px) scale({scale})"
     />
     {#if loading}
-      <div class="preview-spin"><Loader2 class="h-8 w-8 animate-spin" /></div>
+      <div class="preview-spin"><Loader class="h-8 w-8 animate-spin" /></div>
     {/if}
   {:else}
     <div class="preview-spin text-sm text-muted-foreground" draggable="false">

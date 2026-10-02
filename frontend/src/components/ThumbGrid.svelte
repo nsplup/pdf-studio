@@ -2,7 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { createVirtualizer } from "@tanstack/svelte-virtual";
-  import { Plus, Loader2, Trash2, Maximize2 } from "lucide-svelte";
+  import { Plus, Loader, Trash2, Maximize2 } from "lucide-svelte";
   import PagePreview from "./PagePreview.svelte";
 
   let {
@@ -159,7 +159,6 @@
   function menuDelete() {
     const pages = selectionString(menuPages);
     closeMenu();
-    clearSelection();
     onDelete(pages);
   }
 
@@ -288,7 +287,7 @@
                   <div
                     class="flex h-full w-full items-center justify-center text-muted-foreground"
                   >
-                    <Loader2 class="h-5 w-5 animate-spin" />
+                    <Loader class="h-5 w-5 animate-spin" />
                   </div>
                 {/if}
               </div>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tasks } from "../stores";
   import { Progress } from "./ui";
-  import { Loader2 } from "lucide-svelte";
+  import { Loader } from "lucide-svelte";
 </script>
 
 {#if $tasks.length}
@@ -13,7 +13,7 @@
         <div
           class="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground"
         >
-          <Loader2 class="h-3.5 w-3.5 animate-spin" />
+          <Loader class="h-3.5 w-3.5 animate-spin" />
           <span>{t.message || t.label}</span>
           <span class="ml-auto tabular-nums">{t.percent.toFixed(0)}%</span>
         </div>

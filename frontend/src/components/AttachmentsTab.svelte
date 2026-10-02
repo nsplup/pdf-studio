@@ -2,20 +2,25 @@
   import { MetaService, type AttachmentInfo } from "../bindings/services";
   import { Eraser } from "lucide-svelte";
   import { Dialogs } from "@wailsio/runtime";
-  import { currentDoc, notify } from "../stores";
+  import { currentDoc, notify, attachmentsDirty } from "../stores";
   import * as UI from "./ui";
   import {
     Paperclip,
-    Loader2,
+    Loader,
     Trash2,
     Plus,
-    FileQuestion,
+    FileQuestionMark,
   } from "lucide-svelte";
 
   let doc = $derived($currentDoc);
   let loadedID = $state("");
   let attachments = $state<AttachmentInfo[]>([]);
   let busy = $state(false);
+  let touched = $state(false);
+
+  $effect(() => {
+    attachmentsDirty.set(touched);
+  });
 
   $effect(() => {
     void doc;
@@ -28,6 +33,7 @@
 
   async function load(id: string) {
     busy = true;
+    touched = false;
     try {
       attachments = (await MetaService.ListDocAttachments(id)) ?? [];
     } catch (e: any) {
@@ -45,6 +51,7 @@
     try {
       attachments = (await MetaService.ClearDocAttachments(doc.id)) ?? [];
       notify("ok", "附件已清空");
+      touched = true;
     } catch (e: any) {
       notify("err", `清空失败：${e?.message ?? e}`);
     } finally {
@@ -55,6 +62,7 @@
   /** 供 App 调用：导入放置合并附件后刷新 */
   export async function reload() {
     if (loadedID) await load(loadedID);
+    touched = true;
   }
 
   async function addFiles() {
@@ -70,6 +78,7 @@
     try {
       attachments = (await MetaService.AddDocAttachments(doc.id, paths)) ?? [];
       notify("ok", `已添加 ${paths.length} 个附件`);
+      touched = true;
     } catch (e: any) {
       notify("err", `添加附件失败：${e?.message ?? e}`);
     } finally {
@@ -85,11 +94,22 @@
       attachments =
         (await MetaService.RemoveDocAttachments(doc.id, [name])) ?? [];
       notify("ok", "已移除该附件");
+      touched = true;
     } catch (e: any) {
       notify("err", `移除失败：${e?.message ?? e}`);
     } finally {
       busy = false;
     }
+  }
+
+  /** 是否有未保存的书签改动 */
+  export function isDirty(): boolean {
+    return touched;
+  }
+
+  /** 保存成功后由 App 调用，清除 dirty 标记 */
+  export function markClean() {
+    touched = false;
   }
 </script>
 
@@ -104,7 +124,7 @@
       <UI.CardContent>
         {#if busy && !loadedID}
           <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取附件
+            <Loader class="h-5 w-5 animate-spin" /> 正在读取附件
           </div>
         {:else if attachments.length}
           <div class="flex flex-col gap-1.5">
@@ -152,7 +172,7 @@
   <div
     class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
   >
-    <FileQuestion class="h-12 w-12" />
+    <FileQuestionMark class="h-12 w-12" />
     <p class="text-lg">打开 PDF 开始编辑</p>
   </div>
 {/if}

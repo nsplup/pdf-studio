@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"pdfstudio/internal/server"
 	"pdfstudio/internal/service"
@@ -80,6 +81,14 @@ func main() {
 				return documentService.EnsurePageThumb(dir, pg)
 			}),
 		},
+		ShouldQuit: func() bool {
+			if !appService.HasUnsavedChanges() {
+				return true
+			}
+			// 异步通知前端；ShouldQuit 本身立即返回 false 阻止退出
+			go appService.RequestClose()
+			return false
+		},
 		Logger:   logger,
 		LogLevel: slog.LevelInfo,
 	})
@@ -115,7 +124,20 @@ func main() {
 	// 注入窗口显示函数并启动看门狗（前端异常未调用 Ready 时 8 秒强制显示）
 	appService.SetShowFunc(func() { win.Show() })
 	appService.Watchdog(8 * time.Second)
+	// 注入退出函数
+	appService.SetQuitFunc(func() { app.Quit() })
+	appService.SetCloseRequester(func() {
+		app.Event.Emit("app:close-requested")
+	})
 
+	// 窗口关闭钩子：有未保存改动时取消关闭，通知前端弹确认
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if !appService.HasUnsavedChanges() {
+			return
+		}
+		e.Cancel()
+		appService.RequestClose()
+	})
 	if err := app.Run(); err != nil {
 		logger.Error("应用运行异常", "err", err)
 		os.Exit(1)

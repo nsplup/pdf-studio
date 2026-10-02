@@ -17,6 +17,7 @@
     toViewPage,
     fromViewPage,
     outlineProblems,
+    outlineDirty,
     type AppProblem,
     type BookmarkProblem,
   } from "../stores";
@@ -24,10 +25,10 @@
   import TreeNode, { type EditNode } from "./TreeNode.svelte";
   import {
     Trash2,
-    Loader2,
+    Loader,
     ListTree,
     FileOutput,
-    FileQuestion,
+    FileQuestionMark,
     Type,
     TriangleAlert, // 清空确认弹窗还在用
   } from "lucide-svelte";
@@ -46,7 +47,11 @@
   let busy = $state(false);
   let mode = $state<"tree" | "text">("tree");
   let textValue = $state("");
+  let touched = $state(false);
 
+  $effect(() => {
+    outlineDirty.set(touched);
+  });
   /**
    * outlines 单一事实来源：
    * - 树状编辑 → outlines 更新 → 文本渲染同步（此处序列化）；
@@ -85,6 +90,7 @@
 
   async function load(path: string) {
     busy = true;
+    touched = false;
     try {
       const nodes = (await OutlineService.Read(path)) ?? [];
       tree = toEdit(nodes);
@@ -222,6 +228,7 @@
       if (aceLock) return;
       textValue = ed.getValue();
       tree = parseText(textValue);
+      touched = true;
     });
   });
 
@@ -387,6 +394,7 @@
     }
     tree = [...tree, ...toEdit(nodes)];
     if (mode === "text") textValue = serialize(tree);
+    touched = true;
   }
 
   export function retryOutline() {
@@ -400,6 +408,7 @@
     showClearConfirm = true;
   }
   function doClearTree() {
+    touched = true;
     showClearConfirm = false;
     tree = [];
     if (mode === "text") textValue = "";
@@ -407,6 +416,7 @@
 
   /** 根级添加书签 */
   function addRoot() {
+    touched = true;
     tree = [...tree, { title: "新书签", page: 1, expanded: true, kids: [] }];
   }
 
@@ -423,11 +433,14 @@
   }
 
   function onRemove(path: number[]) {
+    touched = true;
     removeNode(tree, path);
     tree = [...tree];
   }
 
   function onChanged() {
+    touched = true;
+
     tree = [...tree]; // 触发重渲染（深层变更已在代理上生效）
   }
 
@@ -448,6 +461,7 @@
       expanded: true,
       kids: [],
     });
+    touched = true;
     tree = [...tree];
   }
 
@@ -468,6 +482,16 @@
     } finally {
       busy = false;
     }
+  }
+
+  /** 是否有未保存的书签改动 */
+  export function isDirty(): boolean {
+    return touched;
+  }
+
+  /** 保存成功后由 App 调用，清除 dirty 标记 */
+  export function markClean() {
+    touched = false;
   }
 </script>
 
@@ -494,7 +518,7 @@
       <UI.CardContent>
         {#if busy && !tree.length}
           <div class="empty">
-            <Loader2 class="h-5 w-5 animate-spin" /> 正在读取书签
+            <Loader class="h-5 w-5 animate-spin" /> 正在读取书签
           </div>
         {:else if tree.length === 0 && loadedPath !== doc?.sourcePath}
           <div class="empty-sm">
@@ -574,7 +598,7 @@
   <div
     class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
   >
-    <FileQuestion class="h-12 w-12" />
+    <FileQuestionMark class="h-12 w-12" />
     <p class="text-lg">打开 PDF 开始编辑</p>
   </div>
 {/if}

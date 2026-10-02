@@ -5,6 +5,8 @@
     type OutlineNode,
     type PageLabel,
   } from "./bindings/services";
+  import { AppService } from "../bindings/pdfstudio/internal/service";
+  import { Events } from "@wailsio/runtime";
   import { pickPDF, pickImport, pickSavePDF } from "./lib/dialogs";
   import {
     currentDoc,
@@ -23,6 +25,13 @@
     waitTask,
     outlineProblems,
     labelProblems,
+    pageResBaseline,
+    snapshotPageRes,
+    hasUnsavedChanges,
+    refreshDirtyFlag,
+    outlineDirty,
+    labelsDirty,
+    attachmentsDirty,
     type AppProblem,
   } from "./stores";
   import ThumbGrid from "./components/ThumbGrid.svelte";
@@ -38,16 +47,17 @@
     FilePlus2,
     Save,
     Download,
-    Loader2,
+    Loader,
     SquareStack,
     ListTree,
     TableProperties,
     Paperclip,
     X,
     Move,
-    FileQuestion,
+    FileQuestionMark,
     TriangleAlert,
     ArrowDownUp,
+    CircleDotDashedIcon,
   } from "lucide-svelte";
 
   type Tab = "thumbs" | "outline" | "labels" | "attachments";
@@ -75,10 +85,76 @@
     ...$labelProblems,
   ]);
   let showProblems = $state(false);
+  let isDirty = $derived.by(() => {
+    if (!doc) return false;
+    const cur = $pageRes[doc.id];
+    const base = $pageResBaseline[doc.id];
+    if (Array.isArray(cur) && Array.isArray(base)) {
+      if (cur.length !== base.length) return true;
+      for (let i = 0; i < cur.length; i++) {
+        if (cur[i] !== base[i]) return true;
+      }
+    }
+    if ($outlineDirty) return true;
+    if ($labelsDirty) return true;
+    if ($attachmentsDirty) return true;
+    return false;
+  });
+
+  interface ConfirmState {
+    open: boolean;
+    title: string;
+    body: string;
+    confirmText: string;
+    destructive: boolean;
+    resolve: ((ok: boolean) => void) | null;
+  }
+
+  let confirmState = $state<ConfirmState>({
+    open: false,
+    title: "",
+    body: "",
+    confirmText: "确认",
+    destructive: false,
+    resolve: null,
+  });
+
+  function askConfirm(opts: {
+    title: string;
+    body: string;
+    confirmText?: string;
+    destructive?: boolean;
+  }): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmState = {
+        open: true,
+        title: opts.title,
+        body: opts.body,
+        confirmText: opts.confirmText ?? "确认",
+        destructive: opts.destructive ?? false,
+        resolve,
+      };
+    });
+  }
+
+  function resolveConfirm(ok: boolean) {
+    const r = confirmState.resolve;
+    confirmState = { ...confirmState, open: false, resolve: null };
+    r?.(ok);
+  }
 
   /** 打开 PDF（按路径复用全局会话） */
   async function openFile() {
-    tab = "thumbs"; // 页面类操作回到缩略图视图
+    if (isDirty) {
+      const ok = await askConfirm({
+        title: "有未保存的改动",
+        body: "当前文档有未保存的改动，打开新文件将丢失这些改动。是否继续？",
+        confirmText: "放弃改动并打开",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    tab = "thumbs";
     const [p] = await pickPDF(false);
     if (!p) return;
     busy = true;
@@ -106,6 +182,7 @@
         d.id,
         d.pages.map((p) => ({ ...p })),
       );
+      snapshotPageRes(d.id, d.pageRes);
       return;
     }
     setPageRes(d.id, null);
@@ -116,6 +193,7 @@
         d.id,
         d.pages.map((p) => ({ ...p })),
       );
+      snapshotPageRes(d.id, res);
     } catch (e: any) {
       setPageRes(d.id, null);
       notify("err", `缩略图加载失败：${e?.message ?? e}`);
@@ -203,6 +281,11 @@
     try {
       const d = await DocumentService.Save(doc.id, collectSaveOptions());
       applyDocUpdate(d);
+      if (Array.isArray($pageRes[doc.id]))
+        snapshotPageRes(doc.id, $pageRes[doc.id] as string[]);
+      outlineTab?.markClean?.();
+      labelsTab?.markClean?.();
+      attachmentsTab?.markClean?.();
       notify("ok", "已保存");
     } catch (e: any) {
       notify("err", `保存失败：${e?.message ?? e}`);
@@ -225,6 +308,11 @@
     try {
       const d = await DocumentService.SaveAs(doc.id, out, collectSaveOptions());
       applyDocUpdate(d);
+      if (Array.isArray($pageRes[doc.id]))
+        snapshotPageRes(doc.id, $pageRes[doc.id] as string[]);
+      outlineTab?.markClean?.();
+      labelsTab?.markClean?.();
+      attachmentsTab?.markClean?.();
       notify("ok", `已保存到：${out.split(/[\\/]/).pop()}`);
     } catch (e: any) {
       notify("err", `保存失败：${e?.message ?? e}`);
@@ -393,6 +481,23 @@
     }
     stopPlacement();
   }
+
+  $effect(() => {
+    refreshDirtyFlag(isDirty);
+    void AppService.SetUnsavedChanges(isDirty);
+  });
+  $effect(() => {
+    const unsub = Events.On("app:close-requested", async () => {
+      const ok = await askConfirm({
+        title: "有未保存的改动",
+        body: "当前文档有未保存的改动，确定要退出吗？",
+        confirmText: "放弃改动并退出",
+        destructive: true,
+      });
+      if (ok) await AppService.ForceQuit();
+    });
+    return unsub;
+  });
 </script>
 
 <div class="flex h-screen w-screen flex-col overflow-hidden">
@@ -416,8 +521,17 @@
     </UI.Button>
     <span class="flex-1"></span>
     {#if doc}
-      <span class="truncate text-sm text-muted-foreground">
-        {doc.fileName} · {logicalCount(doc.id, doc.pageCount)} 页
+      <span
+        class="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground"
+      >
+        {#if isDirty}
+          <CircleDotDashedIcon
+            class="h-3.5 w-3.5 shrink-0 text-amber-600"
+            aria-label="有未保存的改动"
+          />
+        {/if}
+        <span class="truncate">{doc.fileName}</span>
+        <span class="shrink-0">· {logicalCount(doc.id, doc.pageCount)} 页</span>
       </span>
     {:else}
       <span class="text-sm text-muted-foreground">未打开文档</span>
@@ -498,6 +612,14 @@
               return;
             }
 
+            const ok = await askConfirm({
+              title: "删除页面",
+              body: `将删除 ${sel.length} 页（${pages}）。此操作在保存前不会写入文件，可继续编辑但无法撤销。是否继续？`,
+              confirmText: "删除",
+              destructive: true,
+            });
+            if (!ok) return;
+
             replacePageRes(doc.id, next);
             replacePageDims(
               doc.id,
@@ -516,7 +638,7 @@
         <div
           class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"
         >
-          <FileQuestion class="h-12 w-12" />
+          <FileQuestionMark class="h-12 w-12" />
           <p class="text-lg">打开 PDF 开始编辑</p>
         </div>
       {/if}
@@ -568,7 +690,7 @@
       <span
         class="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"
       >
-        <Loader2 class="h-3.5 w-3.5 animate-spin" /> 处理中
+        <Loader class="h-3.5 w-3.5 animate-spin" /> 处理中
       </span>
     {/if}
   </footer>
@@ -633,6 +755,39 @@
       <div class="flex justify-end border-t border-border px-4 py-3">
         <UI.Button variant="outline" onclick={() => (showProblems = false)}>
           关闭
+        </UI.Button>
+      </div>
+    </div>
+  </div>
+{/if}
+{#if confirmState.open}
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="log-overlay"
+    role="alertdialog"
+    aria-modal="true"
+    onclick={(e) => e.target === e.currentTarget && resolveConfirm(false)}
+  >
+    <div class="log-card">
+      <div class="border-b border-border px-4 py-3">
+        <h3 class="flex items-center gap-2 text-sm font-medium">
+          <TriangleAlert class="h-4 w-4 text-amber-600" />
+          {confirmState.title}
+        </h3>
+      </div>
+      <div class="px-4 py-4 text-sm text-muted-foreground">
+        {confirmState.body}
+      </div>
+      <div class="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <UI.Button variant="outline" onclick={() => resolveConfirm(false)}>
+          取消
+        </UI.Button>
+        <UI.Button
+          variant={confirmState.destructive ? "destructive" : "default"}
+          onclick={() => resolveConfirm(true)}
+        >
+          {confirmState.confirmText}
         </UI.Button>
       </div>
     </div>
