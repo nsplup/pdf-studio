@@ -752,11 +752,12 @@
   >
     {#each tabs as t (t.id)}
       <button
-        class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors
+        class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors disabled:pointer-events-none disabled:opacity-50
                {tab === t.id
           ? 'bg-primary/15 font-medium text-foreground'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
         onclick={() => (tab = t.id)}
+        disabled={busy}
       >
         <t.icon class="h-4 w-4 {tab === t.id ? 'text-primary' : ''}" />
         {t.label}

@@ -28,6 +28,7 @@
     Loader,
     ListTree,
     FileOutput,
+    Plus,
     FileQuestionMark,
     Type,
     TriangleAlert, // 清空确认弹窗还在用
@@ -543,6 +544,17 @@
         >
           <Trash2 class="h-4 w-4" /> 清空书签
         </UI.Button>
+
+        {#if mode === "tree"}
+          <UI.Button
+            variant="outline"
+            onclick={addRoot}
+            disabled={busy}
+            title="在末尾添加一个根级书签"
+          >
+            <Plus class="h-4 w-4" /> 添加根书签
+          </UI.Button>
+        {/if}
       </UI.CardFooter>
     </UI.Card>
   </div>
