@@ -97,7 +97,6 @@
         class="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-accent"
         onclick={() => {
           node.expanded = !node.expanded;
-          onChanged();
         }}
       >
         {#if node.expanded}<ChevronDown
