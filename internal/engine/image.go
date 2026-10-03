@@ -37,9 +37,13 @@ type ImageImportConfig struct {
 }
 
 // ImportImagesToPDF 将图片列表按顺序合成为 PDF。
+// PageSizeAuto 模式下每张图按自身像素尺寸出一页；其他模式整批共用统一纸张。
 func ImportImagesToPDF(imgFiles []string, outPath string, cfg ImageImportConfig) error {
 	if len(imgFiles) == 0 {
 		return fmt.Errorf("没有可导入的图片")
+	}
+	if cfg.PageSize == PageSizeAuto {
+		return importImagesAutoPerPage(imgFiles, outPath, cfg)
 	}
 	imp, err := buildImportConfig(cfg, imgFiles[0])
 	if err != nil {
@@ -51,17 +55,23 @@ func ImportImagesToPDF(imgFiles []string, outPath string, cfg ImageImportConfig)
 	return nil
 }
 
-func buildImportConfig(cfg ImageImportConfig, firstImg string) (*pdfcpu.Import, error) {
-	imp := pdfcpu.DefaultImportConfig()
-	imp.InpUnit = types.POINTS
-	imp.Pos = types.Center
+// importImagesAutoPerPage 逐张按自身像素尺寸生成单页 PDF，最后合并为一份。
+// pdfcpu 的 ImportImagesFile 整批共用一份 PageDim，无法做到"每张图不同尺寸"，
+// 只能逐张生成子 PDF 再合并。
+func importImagesAutoPerPage(imgFiles []string, outPath string, cfg ImageImportConfig) error {
+	tmp := &TempNames{}
+	defer tmp.Cleanup()
 
-	if cfg.PageSize == PageSizeAuto {
-		// 每页尺寸 = 图片尺寸 + 四边留白；图片按原始像素 1:1 居中绘制
-		dim, err := imageFileDim(firstImg)
+	parts := make([]string, 0, len(imgFiles))
+	for i, img := range imgFiles {
+		dim, err := imageFileDim(img)
 		if err != nil {
-			return nil, fmt.Errorf("读取图片尺寸失败: %w", err)
+			return fmt.Errorf("读取图片尺寸失败 (%s): %w", filepath.Base(img), err)
 		}
+		part := tmp.New(fmt.Sprintf("auto-%d.pdf", i))
+		imp := pdfcpu.DefaultImportConfig()
+		imp.InpUnit = types.POINTS
+		imp.Pos = types.Center
 		imp.UserDim = true
 		imp.PageDim = &types.Dim{
 			Width:  dim.Width + 2*cfg.MarginPt,
@@ -69,13 +79,28 @@ func buildImportConfig(cfg ImageImportConfig, firstImg string) (*pdfcpu.Import, 
 		}
 		imp.ScaleAbs = true
 		imp.Scale = 1.0
-		return imp, nil
+		if err := api.ImportImagesFile([]string{img}, part, imp, Config()); err != nil {
+			return fmt.Errorf("图片转 PDF 失败 (%s): %w", filepath.Base(img), err)
+		}
+		parts = append(parts, part)
 	}
+	if len(parts) == 1 {
+		return copyPDF(parts[0], outPath)
+	}
+	if err := MergeFiles(parts, outPath); err != nil {
+		return fmt.Errorf("合并图片页失败: %w", err)
+	}
+	return nil
+}
 
-	// 纸张模式：图片等比适配页面，边距通过缩小比例实现
+func buildImportConfig(cfg ImageImportConfig, _ string) (*pdfcpu.Import, error) {
+	imp := pdfcpu.DefaultImportConfig()
+	imp.InpUnit = types.POINTS
+	imp.Pos = types.Center
+
 	pageSize := string(cfg.PageSize)
-	if pageSize == "" {
-		pageSize = PageSizeA4.String()
+	if pageSize == "" || pageSize == PageSizeAuto.String() {
+		pageSize = PageSizeA4.String() // 兜底：Auto 不应再走到这里
 	}
 	imp.PageSize = pageSize
 	imp.UserDim = true
