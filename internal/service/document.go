@@ -323,8 +323,11 @@ func (s *DocumentService) SaveAs(id, targetPath string, opts *SaveOptions) (*Doc
 		return nil, err
 	}
 	_ = os.Remove(out)
+	if doc.att != nil {
+		doc.att.reset()
+	}
 
-	// 用新的工作版本原子替换目标文件。
+	// 写到用户选定的路径（不是 doc.SourcePath —— 那是旧路径/空串）
 	if err := atomicWrite(targetPath, doc.WorkPath); err != nil {
 		return nil, err
 	}
@@ -365,9 +368,10 @@ func (s *DocumentService) Save(id string, opts *SaveOptions) (*DocInfo, error) {
 		return nil, err
 	}
 	_ = os.Remove(out)
+	if doc.att != nil {
+		doc.att.reset() // ← 附件已并入新工作版本，清空移除/新增集合
+	}
 
-	// 用新的工作版本原子替换原文件。
-	// atomicWrite 内部先写临时文件再 rename，失败时原文件保持不变。
 	if err := atomicWrite(doc.SourcePath, doc.WorkPath); err != nil {
 		return nil, err
 	}
@@ -416,28 +420,52 @@ func (s *DocumentService) mergeAux(doc *Document, opts *SaveOptions, out string)
 
 	// 1) 书签：replace（空切片 = 清空全部书签）
 	if opts != nil && opts.Outline != nil {
-		mid := nextOut("bm")
 		if len(*opts.Outline) == 0 {
-			if err := engine.RemoveBookmarks(cur, mid); err != nil {
+			// 空切片语义是"清空书签"。pdfcpu 在文件本身没有书签时
+			// 会返回 "no bookmarks available"，对调用方来说这是幂等操作。
+			// 先读一遍，确实有书签才删。
+			bms, berr := engine.ReadBookmarks(cur)
+			if berr != nil {
+				return seqApplied, berr
+			}
+			if len(bms) > 0 {
+				mid := nextOut("bm")
+				if err := engine.RemoveBookmarks(cur, mid); err != nil {
+					return seqApplied, err
+				}
+				cur = mid
+			}
+		} else {
+			mid := nextOut("bm")
+			if err := engine.WriteBookmarks(cur, mid, toEngineBookmarks(clampOutlinePages(*opts.Outline, effPageCount)), true); err != nil {
 				return seqApplied, err
 			}
-		} else if err := engine.WriteBookmarks(cur, mid, toEngineBookmarks(clampOutlinePages(*opts.Outline, effPageCount)), true); err != nil {
-			return seqApplied, err
+			cur = mid
 		}
-		cur = mid
 	}
 
 	// 2) 页标签：replace（空切片 = 移除全部页标签）
 	if opts != nil && opts.Labels != nil {
-		mid := nextOut("pl")
 		if len(*opts.Labels) == 0 {
-			if err := engine.RemovePageLabels(cur, mid); err != nil {
+			// 同上：文件本身无页标签时 pdfcpu 报错，先读确认。
+			spec, lerr := engine.ReadPageLabels(cur)
+			if lerr != nil {
+				return seqApplied, lerr
+			}
+			if spec != nil && len(spec.Ranges) > 0 {
+				mid := nextOut("pl")
+				if err := engine.RemovePageLabels(cur, mid); err != nil {
+					return seqApplied, err
+				}
+				cur = mid
+			}
+		} else {
+			mid := nextOut("pl")
+			if err := writeLabelsFile(cur, mid, *opts.Labels); err != nil {
 				return seqApplied, err
 			}
-		} else if err := writeLabelsFile(cur, mid, *opts.Labels); err != nil {
-			return seqApplied, err
+			cur = mid
 		}
-		cur = mid
 	}
 
 	// 3) 附件会话：移除 + 新增
@@ -471,7 +499,6 @@ func atomicWrite(target, src string) error {
 	if err := tmp.Close(); err != nil {
 		return WrapErr("SAVE_FAILED", "写入临时文件失败", err)
 	}
-	// 复制而非 rename 工作版本：保留工作版本供继续编辑
 	if err := copyFile(src, tmpName); err != nil {
 		return err
 	}

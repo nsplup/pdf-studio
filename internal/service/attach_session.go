@@ -54,6 +54,18 @@ func (a *AttachSession) remove(name string) {
 	a.removed[name] = true
 }
 
+// reset 清空会话状态：移除集合清空，新增项连同暂存文件一并删除。
+// 保存成功后调用——此刻附件已经写入新的工作版本，会话不再需要保留任何变更。
+func (a *AttachSession) reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, sa := range a.added {
+		_ = os.Remove(sa.FilePath)
+	}
+	a.removed = map[string]bool{}
+	a.added = nil
+}
+
 func (a *AttachSession) hasChanges() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -72,16 +84,30 @@ func (a *AttachSession) apply(inPath, outPath string) error {
 		}
 	}()
 	if len(a.removed) > 0 {
-		names := make([]string, 0, len(a.removed))
-		for n := range a.removed {
-			names = append(names, n)
-		}
-		mid := outPath + ".att0"
-		if err := engine.RemoveAttachments(cur, mid, names); err != nil {
+		// 只移除确实存在的附件；pdfcpu 在名称树为空或名称不存在时会报错，
+		// 而我们语义上是"确保这些附件不在输出里"，本来就该是幂等操作。
+		orig, err := engine.ListAttachments(cur)
+		if err != nil {
 			return err
 		}
-		chain = append(chain, mid)
-		cur = mid
+		exist := make(map[string]bool, len(orig))
+		for _, o := range orig {
+			exist[o.FileName] = true
+		}
+		names := make([]string, 0, len(a.removed))
+		for n := range a.removed {
+			if exist[n] {
+				names = append(names, n)
+			}
+		}
+		if len(names) > 0 {
+			mid := outPath + ".att0"
+			if err := engine.RemoveAttachments(cur, mid, names); err != nil {
+				return err
+			}
+			chain = append(chain, mid)
+			cur = mid
+		}
 	}
 	if len(a.added) > 0 {
 		files := make([]string, 0, len(a.added))
