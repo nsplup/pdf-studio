@@ -82,10 +82,10 @@ func (s *DocumentService) GenerateThumbnails(id string, width int, fromPage int)
 	if fromPage > pageCount {
 		return "", NewErr("INVALID_PARAM", fmt.Sprintf("起始页 %d 超出文档页数 %d", fromPage, pageCount))
 	}
-	s.bus.Task(taskID, "生成缩略图", func(report func(current, total int, msg string)) (any, error) {
+	s.bus.Task(taskID, "生成缩略图", func(report func(Progress)) (any, error) {
 		outDir := s.store.ws.ThumbsDir(id)
 		n, err := engine.RenderThumbnailsDir(workPath, outDir, width, fromPage, func(done, total int) {
-			report(done, total, fmt.Sprintf("渲染缩略图 %d/%d", done, total))
+			report(Progress{Current: done, Total: total, Phase: "渲染缩略图"})
 		})
 		if err != nil {
 			// 部分成功也保留已生成页
@@ -595,7 +595,7 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 	}
 
 	taskID := "import-" + randomToken()
-	s.bus.Task(taskID, "导入文件", func(report func(current, total int, msg string)) (any, error) {
+	s.bus.Task(taskID, "导入文件", func(report func(Progress)) (any, error) {
 		bufID := "img-" + randomToken()
 		bufDir := s.store.ws.ImagesDir(bufID)
 		if err := os.MkdirAll(bufDir, 0o755); err != nil {
@@ -626,7 +626,10 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			p := paths[i]
 			ext := strings.ToLower(filepath.Ext(p))
 			if ext == ".pdf" {
-				report(i, total, fmt.Sprintf("解析 %d/%d：%s", i+1, total, filepath.Base(p)))
+				report(Progress{
+					Current: i, Total: total,
+					Phase: "解析", Detail: filepath.Base(p),
+				})
 				infos = append(infos, pieceInfo{path: p, src: p})
 				i++
 				continue
@@ -640,13 +643,20 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 				if qe == ".pdf" {
 					break
 				}
-				report(i, total, fmt.Sprintf("解析 %d/%d：%s", i+1, total, filepath.Base(q)))
+				// 收集只是 append，零成本，不 report
 				images = append(images, q)
 				i++
 			}
 			tmpImg := filepath.Join(bufDir, fmt.Sprintf("images-part-%d.pdf", start))
-			if err := engine.ImportImagesToPDF(images, tmpImg, engine.ImageImportConfig{
+			if err := engine.ImportImagesToPDFWithProgress(images, tmpImg, engine.ImageImportConfig{
 				PageSize: engine.PageSizeAuto,
+			}, func(done, _ int) {
+				report(Progress{
+					Current: start + done, // 与 total 同单位（文件数）
+					Total:   total,
+					Phase:   "解析",
+					Detail:  filepath.Base(images[done-1]),
+				})
 			}); err != nil {
 				_ = os.RemoveAll(bufDir)
 				return nil, WrapErr("IMPORT_FAILED", "图片解析失败", err)
@@ -660,7 +670,7 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			pieces = append(pieces, info.path)
 		}
 
-		report(total, total, "生成待放置内容")
+		report(Progress{Current: total, Total: total, Phase: "生成待放置内容"})
 		if len(pieces) == 1 {
 			if err := copyFile(pieces[0], bufPDF); err != nil {
 				_ = os.RemoveAll(bufDir)
@@ -712,7 +722,14 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			_ = os.RemoveAll(old.ThumbsDir)
 		}
 
-		res, err := s.ensurePageResBatch(bufPDF, count)
+		// 内容资源：一次打开 bufPDF，批量渲染基图并注册 uuid
+		res, err := s.ensurePageResBatch(bufPDF, count, func(done, total int) {
+			report(Progress{
+				Current: done,
+				Total:   total,
+				Phase:   "渲染页面资源",
+			})
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -795,11 +812,24 @@ func (s *DocumentService) AbsorbBufferAux(id string, atIndex int, before bool) (
 // absorbAuxLocked 读取缓冲区来源 PDF 的书签/页标签/附件并平移合并进文档会话。
 func (s *DocumentService) absorbAuxLocked(doc *Document, buf *ImportBuffer, insertOffset int) *PlaceResult {
 	res := &PlaceResult{Info: doc.docInfoLocked()}
-	// 1) 书签：缓冲区 PDF 已合并各来源书签（页码相对缓冲区），整体平移
-	if bms, berr := engine.ReadBookmarks(buf.PDFPath); berr == nil && len(bms) > 0 {
+	// 1) 书签：从每个来源 PDF 自身读取（而非 buf.PDFPath）。
+	//    缓冲区是 pdfcpu MergeCreateFile 的产物，会为每个片段自动加一条
+	//    以文件名为标题的顶层书签；从源头读即可完全绕过这类噪声。
+	//    Sources 为空（纯图片导入）时天然无书签。
+	var added []OutlineNode
+	for _, src := range buf.Sources {
+		bms, err := engine.ReadBookmarks(src.Path)
+		if err != nil || len(bms) == 0 {
+			continue
+		}
 		nodes := fromEngineBookmarks(bms)
-		shiftOutline(nodes, insertOffset)
-		res.AddedOutline = nodes
+		// 源文件内部页码 → 缓冲区页 → 最终文档页：
+		//   final = src.Start + sourcePage + insertOffset
+		shiftOutline(nodes, src.Start+insertOffset)
+		added = append(added, nodes...)
+	}
+	if len(added) > 0 {
+		res.AddedOutline = added
 	}
 	// 2) 页标签 + 附件：按来源 PDF 读取并平移
 	attachDir := s.store.ws.AttachDir(doc.ID)

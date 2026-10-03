@@ -44,16 +44,19 @@ func (s *MergeService) Start(req MergeRequest) (string, error) {
 	}
 
 	taskID := "merge-" + randomToken()
-	s.bus.Task(taskID, "合并 PDF", func(report func(current, total int, msg string)) (any, error) {
+	s.bus.Task(taskID, "合并 PDF", func(report func(Progress)) (any, error) {
 		total := len(inputs)
-		// 分两阶段模拟逐文件进度：校验读取 + 写入；pdfcpu 合并为单次调用
 		for i, p := range inputs {
-			report(i, total, fmt.Sprintf("处理 %d/%d：%s", i, total, filepath.Base(p)))
+			report(Progress{
+				Current: i, Total: total,
+				Phase: "校验", Detail: filepath.Base(p),
+			})
 			if _, err := engine.PageCount(p); err != nil {
-				return nil, WrapErr("PDF_OPEN_FAILED", fmt.Sprintf("文件无法解析: %s", filepath.Base(p)), err)
+				return nil, WrapErr("PDF_OPEN_FAILED",
+					fmt.Sprintf("文件无法解析: %s", filepath.Base(p)), err)
 			}
 		}
-		report(total, total, "写入输出文件")
+		report(Progress{Current: total, Total: total, Phase: "写入输出文件"})
 		if err := engine.MergeFiles(inputs, req.OutputPath); err != nil {
 			return nil, err
 		}

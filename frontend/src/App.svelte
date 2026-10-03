@@ -171,12 +171,10 @@
     }
   }
 
-  /** 确保缩略图已生成：已有版本（本会话生成过）直接复用；文件在但无版本则初始化；否则全量生成 */
-  /** 拉取页面内容资源（内容寻址；未加载过时后端渲染 140px 基图） */
   async function ensureThumbs(d: DocInfo) {
     const cur = $pageRes[d.id];
-    if (Array.isArray(cur)) return; // 已就绪
-    if (cur === null) return; // 拉取中
+    if (Array.isArray(cur)) return;
+    if (cur === null) return;
     if (d.pageRes && d.pageRes.length === d.pageCount) {
       setPageRes(d.id, d.pageRes);
       setPageDims(
@@ -188,13 +186,14 @@
     }
     setPageRes(d.id, null);
     try {
-      const res = await DocumentService.PageResources(d.id);
-      setPageRes(d.id, res);
+      const tid = await DocumentService.PageResources(d.id);
+      const res = await waitTask(tid);
+      setPageRes(d.id, res as string[]);
       setPageDims(
         d.id,
         d.pages.map((p) => ({ ...p })),
       );
-      snapshotPageRes(d.id, res);
+      snapshotPageRes(d.id, res as string[]);
     } catch (e: any) {
       setPageRes(d.id, null);
       notify("err", `缩略图加载失败：${e?.message ?? e}`);

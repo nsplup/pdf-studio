@@ -85,9 +85,9 @@ export const DocumentService = {
   PageThumbnail: (id: string, pageNr: number, width: number) =>
     call<string>("DocumentService", "PageThumbnail", id, pageNr, width),
 
-  /** 页面内容资源：渲染每页 140px 基图并返回 uuid 有序列表（内容寻址缓存） */
-  PageResources: (id: string) => call<string[]>("DocumentService", "PageResources", id),
-
+  /** 渲染页面资源（异步任务）；完成事件 result 为 uuid 有序列表 */
+  PageResources: (id: string) =>
+    call<string>("DocumentService", "PageResources", id),
   /** 在 atIndex 页前/后插入 count 张空白页（零重渲染，占位图填充） */
   InsertBlankPages: (id: string, atIndex: number, count: number, before: boolean) =>
     call<DocInfo>("DocumentService", "InsertBlankPages", id, atIndex, count, before),

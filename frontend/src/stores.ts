@@ -1,6 +1,6 @@
 import { writable, get } from "svelte/store";
 import { Events } from "@wailsio/runtime";
-import type { TaskUpdate, DocInfo, PageDim } from "./bindings/services";
+import type { DocInfo, PageDim } from "./bindings/services";
 
 // ---------- 任务进度 ----------
 
@@ -159,6 +159,29 @@ export function applyDocUpdate(doc: DocInfo) {
 
 // ---------- 任务事件订阅（应用启动时调用一次） ----------
 
+export interface TaskUpdate {
+  taskId: string;
+  kind: "progress" | "done" | "error";
+  label?: string;
+  percent: number;
+  message: string;
+  phase?: string;
+  detail?: string;
+  error?: string;
+  result?: unknown;
+}
+
+export interface RunningTask {
+  id: string;
+  label: string;
+  phase: string;
+  detail: string;
+  percent: number;
+  message: string;
+}
+
+
+
 export function initTaskEvents() {
   Events.On("task:update", (ev: any) => {
     const u: TaskUpdate | undefined = ev?.data?.[0] ?? ev?.data;
@@ -172,6 +195,8 @@ export function initTaskEvents() {
       const entry: RunningTask = {
         id: u.taskId,
         label: u.label ?? "任务",
+        phase: u.phase ?? "",
+        detail: u.detail ?? "",
         percent: u.percent ?? 0,
         message: u.message ?? "",
       };

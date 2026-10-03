@@ -47,6 +47,53 @@ func RenderPagePNG(pdfPath string, pageNr int, targetWidth int) ([]byte, error) 
 	return png, nil
 }
 
+// RenderPagesToFiles 打开一次文档，顺序渲染多页到各自路径。
+// pages 与 outs 长度必须一致（pages 为 1-based 页码）。
+// onPage 每完成一页回调（done 从 1 开始）；为 nil 时静默。
+// 相比逐页调用 RenderPagePNGToFile，省去 N-1 次 fitz.New/Close 的解析开销。
+func RenderPagesToFiles(
+	pdfPath string, pages []int, outs []string, targetWidth int,
+	onPage func(done, total int),
+) error {
+	if len(pages) != len(outs) {
+		return fmt.Errorf("pages 与 outs 长度不一致")
+	}
+	if len(pages) == 0 {
+		return nil
+	}
+	doc, err := fitz.New(pdfPath)
+	if err != nil {
+		return fmt.Errorf("打开文档渲染失败: %w", err)
+	}
+	defer doc.Close()
+
+	n := doc.NumPage()
+	for i, pageNr := range pages {
+		if pageNr < 1 || pageNr > n {
+			return fmt.Errorf("页码 %d 超出总页数 %d", pageNr, n)
+		}
+		bound, berr := doc.Bound(pageNr - 1)
+		dpi := 72.0
+		if berr == nil && bound.Dx() > 0 {
+			dpi = 72.0 * float64(targetWidth) / float64(bound.Dx())
+		}
+		if dpi > 300 {
+			dpi = 300
+		}
+		png, rerr := doc.ImagePNG(pageNr-1, dpi)
+		if rerr != nil {
+			return fmt.Errorf("渲染第 %d 页失败: %w", pageNr, rerr)
+		}
+		if werr := os.WriteFile(outs[i], png, 0o644); werr != nil {
+			return fmt.Errorf("写入第 %d 页失败: %w", pageNr, werr)
+		}
+		if onPage != nil {
+			onPage(i+1, len(pages))
+		}
+	}
+	return nil
+}
+
 // RenderThumbnailsDir 为文档生成缩略图到 outDir，命名 p%d.png。
 // fromPage（1-based）之前的页保留已有文件（增量重渲染：页面编辑只影响受影响页），
 // 并清理超过总页数的残留文件。onPage 每完成一页回调（done 从 1 开始）；为 nil 时静默。
@@ -103,45 +150,6 @@ func RenderPagePNGToFile(pdfPath string, pageNr, targetWidth int, outPath string
 	}
 	if err := os.WriteFile(outPath, data, 0o644); err != nil {
 		return fmt.Errorf("写入缩略图失败: %w", err)
-	}
-	return nil
-}
-
-// RenderPagesToFiles 打开一次文档，顺序渲染多页到各自路径。
-// pages 与 outs 长度必须一致（pages 为 1-based 页码）。
-// 相比逐页调用 RenderPagePNGToFile，省去 N-1 次 fitz.New/Close 的解析开销。
-func RenderPagesToFiles(pdfPath string, pages []int, outs []string, targetWidth int) error {
-	if len(pages) != len(outs) {
-		return fmt.Errorf("pages 与 outs 长度不一致")
-	}
-	if len(pages) == 0 {
-		return nil
-	}
-	doc, err := fitz.New(pdfPath)
-	if err != nil {
-		return fmt.Errorf("打开文档渲染失败: %w", err)
-	}
-	defer doc.Close()
-	n := doc.NumPage()
-	for i, pageNr := range pages {
-		if pageNr < 1 || pageNr > n {
-			return fmt.Errorf("页码 %d 超出总页数 %d", pageNr, n)
-		}
-		bound, berr := doc.Bound(pageNr - 1)
-		dpi := 72.0
-		if berr == nil && bound.Dx() > 0 {
-			dpi = 72.0 * float64(targetWidth) / float64(bound.Dx())
-		}
-		if dpi > 300 {
-			dpi = 300
-		}
-		png, rerr := doc.ImagePNG(pageNr-1, dpi)
-		if rerr != nil {
-			return fmt.Errorf("渲染第 %d 页失败: %w", pageNr, rerr)
-		}
-		if werr := os.WriteFile(outs[i], png, 0o644); werr != nil {
-			return fmt.Errorf("写入第 %d 页失败: %w", pageNr, werr)
-		}
 	}
 	return nil
 }

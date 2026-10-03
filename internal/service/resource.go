@@ -67,7 +67,7 @@ type pageSource struct {
 }
 
 // allocatePageRes 分配资源 uuid 并登记来源；不渲染任何像素。
-// 渲染由调用方批量完成（ensurePageResBatch）。
+// 返回 uuid 与该资源的目录路径，渲染由调用方完成。
 func (s *DocumentService) allocatePageRes(workPath string, page int) (string, string, error) {
 	var u, resDir string
 	for i := 0; i < 20; i++ {
@@ -82,6 +82,7 @@ func (s *DocumentService) allocatePageRes(workPath string, page int) (string, st
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 			return "", "", err
 		}
+		// 用 Mkdir 而不是 MkdirAll：目录已存在说明碰撞，换一个
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			if os.IsExist(err) {
 				continue
@@ -98,7 +99,7 @@ func (s *DocumentService) allocatePageRes(workPath string, page int) (string, st
 	return u, resDir, nil
 }
 
-// ensurePageRes 分配资源并立即渲染 140px 基图（单页场景）。
+// ensurePageRes 分配资源并立即渲染 140px 基图（单页场景，供 HealResource 等使用）。
 func (s *DocumentService) ensurePageRes(workPath string, page int) (string, error) {
 	u, dir, err := s.allocatePageRes(workPath, page)
 	if err != nil {
@@ -113,13 +114,20 @@ func (s *DocumentService) ensurePageRes(workPath string, page int) (string, erro
 }
 
 // ensurePageResBatch 一次打开文档，批量分配并渲染 1..count 页的 140px 基图。
-// 比逐页 ensurePageRes 快得多：省去 N-1 次 fitz.New/Close。
+// onPage 每完成一页回调（done 从 1 开始）；为 nil 时静默。
 // 返回的 uuid 列表按页码顺序排列。
-func (s *DocumentService) ensurePageResBatch(workPath string, count int) ([]string, error) {
+//
+// 任一页失败时回滚所有已分配的资源目录，并返回错误。
+func (s *DocumentService) ensurePageResBatch(
+	workPath string, count int,
+	onPage func(done, total int),
+) ([]string, error) {
 	res := make([]string, 0, count)
 	dirs := make([]string, 0, count)
 	pages := make([]int, 0, count)
 	outs := make([]string, 0, count)
+
+	// 阶段 1：分配 uuid 与目录（轻量）
 	for p := 1; p <= count; p++ {
 		u, dir, err := s.allocatePageRes(workPath, p)
 		if err != nil {
@@ -133,7 +141,9 @@ func (s *DocumentService) ensurePageResBatch(workPath string, count int) ([]stri
 		pages = append(pages, p)
 		outs = append(outs, filepath.Join(dir, "140.png"))
 	}
-	if err := engine.RenderPagesToFiles(workPath, pages, outs, 140); err != nil {
+
+	// 阶段 2：批量渲染（打开一次文档）
+	if err := engine.RenderPagesToFiles(workPath, pages, outs, 140, onPage); err != nil {
 		for _, d := range dirs {
 			_ = os.RemoveAll(d)
 		}
@@ -142,26 +152,46 @@ func (s *DocumentService) ensurePageResBatch(workPath string, count int) ([]stri
 	return res, nil
 }
 
-func (s *DocumentService) PageResources(id string) ([]string, error) {
+// PageResources 异步渲染文档全部页面的资源基图；返回任务 ID。
+// 完成事件 result 为资源 uuid 有序列表。
+// 已缓存（doc.res 与 PageCount 一致）时任务立即完成。
+func (s *DocumentService) PageResources(id string) (string, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	doc.mu.Lock()
-	defer doc.mu.Unlock()
-	if len(doc.res) == doc.PageCount && doc.PageCount > 0 {
-		out := make([]string, len(doc.res))
-		copy(out, doc.res)
+	taskID := "res-" + id
+	s.bus.Task(taskID, "渲染页面资源", func(report func(Progress)) (any, error) {
+		doc.mu.Lock()
+		defer doc.mu.Unlock()
+
+		// 缓存命中：直接返回
+		if len(doc.res) == doc.PageCount && doc.PageCount > 0 {
+			out := make([]string, len(doc.res))
+			copy(out, doc.res)
+			return out, nil
+		}
+		if doc.PageCount <= 0 {
+			return []string{}, nil
+		}
+
+		res, err := s.ensurePageResBatch(doc.WorkPath, doc.PageCount,
+			func(done, total int) {
+				report(Progress{
+					Current: done,
+					Total:   total,
+					Phase:   "渲染页面资源",
+				})
+			})
+		if err != nil {
+			return nil, err
+		}
+		doc.res = res
+		out := make([]string, len(res))
+		copy(out, res)
 		return out, nil
-	}
-	res, err := s.ensurePageResBatch(doc.WorkPath, doc.PageCount)
-	if err != nil {
-		return nil, err
-	}
-	doc.res = res
-	out := make([]string, len(res))
-	copy(out, res)
-	return out, nil
+	})
+	return taskID, nil
 }
 
 // piecesFor 把 uuid 序列解析为装配单元（来源页或空白页）。

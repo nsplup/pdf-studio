@@ -70,12 +70,12 @@ func (s *ImageService) Start(req ImagesToPDFRequest) (string, error) {
 	}
 
 	taskID := "img2pdf-" + randomToken()
-	s.bus.Task(taskID, "图片转 PDF", func(report func(current, total int, msg string)) (any, error) {
+	s.bus.Task(taskID, "图片转 PDF", func(report func(Progress)) (any, error) {
 		total := len(images)
 		for i := range images {
-			report(i+1, total, fmt.Sprintf("校验图片 %d/%d", i+1, total))
+			report(Progress{Current: i + 1, Total: total, Phase: "校验图片"})
 		}
-		report(total, total, "生成 PDF")
+		report(Progress{Current: total, Total: total, Phase: "生成 PDF"})
 		cfg := engine.ImageImportConfig{
 			PageSize:  engine.PageSizeMode(req.PageSize),
 			Landscape: req.Landscape,

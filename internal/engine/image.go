@@ -36,14 +36,22 @@ type ImageImportConfig struct {
 	Pos       string       `json:"pos"`       // 锚点：full 居中铺满余量区域
 }
 
-// ImportImagesToPDF 将图片列表按顺序合成为 PDF。
-// PageSizeAuto 模式下每张图按自身像素尺寸出一页；其他模式整批共用统一纸张。
+// ImportImagesToPDF 将图片列表按顺序合成为 PDF（无进度回调版本）。
 func ImportImagesToPDF(imgFiles []string, outPath string, cfg ImageImportConfig) error {
+	return ImportImagesToPDFWithProgress(imgFiles, outPath, cfg, nil)
+}
+
+// ImportImagesToPDFWithProgress 带进度回调：每完成一张图片调用一次 onPage(done, total)。
+// done 从 1 开始；onPage 为 nil 时静默。
+func ImportImagesToPDFWithProgress(
+	imgFiles []string, outPath string, cfg ImageImportConfig,
+	onPage func(done, total int),
+) error {
 	if len(imgFiles) == 0 {
 		return fmt.Errorf("没有可导入的图片")
 	}
 	if cfg.PageSize == PageSizeAuto {
-		return importImagesAutoPerPage(imgFiles, outPath, cfg)
+		return importImagesAutoPerPage(imgFiles, outPath, cfg, onPage)
 	}
 	imp, err := buildImportConfig(cfg, imgFiles[0])
 	if err != nil {
@@ -52,13 +60,17 @@ func ImportImagesToPDF(imgFiles []string, outPath string, cfg ImageImportConfig)
 	if err := api.ImportImagesFile(imgFiles, outPath, imp, Config()); err != nil {
 		return fmt.Errorf("图片转 PDF 失败: %w", err)
 	}
+	// 统一纸张模式走 pdfcpu 单次调用，无法逐张回调：结束后补一次
+	if onPage != nil {
+		onPage(len(imgFiles), len(imgFiles))
+	}
 	return nil
 }
 
-// importImagesAutoPerPage 逐张按自身像素尺寸生成单页 PDF，最后合并为一份。
-// pdfcpu 的 ImportImagesFile 整批共用一份 PageDim，无法做到"每张图不同尺寸"，
-// 只能逐张生成子 PDF 再合并。
-func importImagesAutoPerPage(imgFiles []string, outPath string, cfg ImageImportConfig) error {
+func importImagesAutoPerPage(
+	imgFiles []string, outPath string, cfg ImageImportConfig,
+	onPage func(done, total int),
+) error {
 	tmp := &TempNames{}
 	defer tmp.Cleanup()
 
@@ -83,6 +95,9 @@ func importImagesAutoPerPage(imgFiles []string, outPath string, cfg ImageImportC
 			return fmt.Errorf("图片转 PDF 失败 (%s): %w", filepath.Base(img), err)
 		}
 		parts = append(parts, part)
+		if onPage != nil {
+			onPage(i+1, len(imgFiles)) // ← 关键
+		}
 	}
 	if len(parts) == 1 {
 		return copyPDF(parts[0], outPath)

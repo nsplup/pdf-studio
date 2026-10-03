@@ -6,26 +6,6 @@ import (
 	"sync"
 )
 
-// Progress 任务进度快照。
-type Progress struct {
-	TaskID  string  `json:"taskId"`
-	Current int     `json:"current"`
-	Total   int     `json:"total"`
-	Percent float64 `json:"percent"`
-	Message string  `json:"message"`
-}
-
-// TaskUpdate 推送给前端的任务状态。
-type TaskUpdate struct {
-	TaskID  string  `json:"taskId"`
-	Kind    string  `json:"kind"` // progress | done | error
-	Label   string  `json:"label,omitempty"`
-	Percent float64 `json:"percent"`
-	Message string  `json:"message"`
-	Error   string  `json:"error,omitempty"`
-	Result  any     `json:"result,omitempty"`
-}
-
 // EventBus 把服务层事件桥接到 Wails 事件系统；服务本身不依赖 Wails。
 type EventBus struct {
 	mu   sync.RWMutex
@@ -51,9 +31,29 @@ func (b *EventBus) Emit(name string, data any) {
 	}
 }
 
-// Task 异步执行长任务，自动推送 progress/done/error 事件。
-// 内部兜底 recover：任何 panic 都会转为 error 事件，保证前端进度浮层不会永久卡住。
-func (b *EventBus) Task(taskID, label string, work func(report func(current, total int, msg string)) (any, error)) {
+// Progress 一次进度上报的结构化载荷。
+// Phase 用于前端分组与阶段切换检测；Detail 承载易变细节（文件名等）；
+// message 不再由后端拼装，交给前端按 phase + detail 渲染。
+type Progress struct {
+	Current int    `json:"current"`
+	Total   int    `json:"total"`
+	Phase   string `json:"phase"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+type TaskUpdate struct {
+	TaskID  string  `json:"taskId"`
+	Kind    string  `json:"kind"`
+	Label   string  `json:"label,omitempty"`
+	Percent float64 `json:"percent"`
+	Message string  `json:"message"`
+	Phase   string  `json:"phase,omitempty"`
+	Detail  string  `json:"detail,omitempty"`
+	Error   string  `json:"error,omitempty"`
+	Result  any     `json:"result,omitempty"`
+}
+
+func (b *EventBus) Task(taskID, label string, work func(report func(Progress)) (any, error)) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -64,17 +64,19 @@ func (b *EventBus) Task(taskID, label string, work func(report func(current, tot
 				})
 			}
 		}()
-		report := func(current, total int, msg string) {
+		report := func(p Progress) {
 			pct := 0.0
-			if total > 0 {
-				pct = float64(current) / float64(total) * 100
+			if p.Total > 0 {
+				pct = float64(p.Current) / float64(p.Total) * 100
 			}
 			b.Emit("task:update", TaskUpdate{
 				TaskID: taskID, Kind: "progress",
-				Label: label, Percent: pct, Message: msg,
+				Label: label, Percent: pct,
+				Phase: p.Phase, Detail: p.Detail,
+				Message: p.Phase, // 兜底：前端未识别 phase 时仍能显示
 			})
 		}
-		report(0, 1, label)
+		report(Progress{Phase: label})
 		result, err := work(report)
 		if err != nil {
 			b.Emit("task:update", TaskUpdate{
