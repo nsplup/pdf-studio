@@ -157,6 +157,24 @@ export function applyDocUpdate(doc: DocInfo) {
   currentDoc.set(doc);
 }
 
+/** 关闭文档时清空该文档的派生缓存（Tab 内部状态由各组件 reset 负责） */
+export function clearDocState(id: string) {
+  const drop = <T>(m: Record<string, T>) => {
+    if (!(id in m)) return m;
+    const n = { ...m };
+    delete n[id];
+    return n;
+  };
+  pageRes.update(drop);
+  pageDims.update(drop);
+  pageResBaseline.update(drop);
+
+  // 兜底：即使 Tab reset 没调到（比如实例还没挂载），也清掉问题列表
+  outlineProblems.set([]);
+  labelProblems.set([]);
+  hasUnsavedChanges.set(false);
+}
+
 // ---------- 任务事件订阅（应用启动时调用一次） ----------
 
 export interface TaskUpdate {

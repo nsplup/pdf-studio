@@ -111,6 +111,12 @@
   export function markClean() {
     touched = false;
   }
+  export function reset() {
+    loadedID = "";
+    attachments = [];
+    touched = false;
+    busy = false;
+  }
 </script>
 
 {#if doc}

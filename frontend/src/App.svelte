@@ -33,6 +33,7 @@
     outlineDirty,
     labelsDirty,
     attachmentsDirty,
+    clearDocState,
     type AppProblem,
   } from "./stores";
   import ThumbGrid from "./components/ThumbGrid.svelte";
@@ -573,6 +574,37 @@
     });
     return unsub;
   });
+
+  async function doClose() {
+    if (!doc) return;
+    busy = true;
+    try {
+      const id = doc.id;
+      await DocumentService.Close(id);
+
+      // 清 store
+      clearDocState(id);
+      currentDoc.set(null);
+
+      // 清 Tab 内部状态（按依赖顺序：先清 Tab，再清派生问题列表）
+      outlineTab?.reset?.();
+      labelsTab?.reset?.();
+      attachmentsTab?.reset?.();
+
+      // 主页面自身
+      selected = new Set();
+      tab = "thumbs";
+      movePagesSel = "";
+      showProblems = false;
+      stopPlacement();
+
+      notify("ok", "文档已关闭");
+    } catch (e: any) {
+      notify("err", `关闭失败：${e?.message ?? e}`);
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 <div class="flex h-screen w-screen flex-col overflow-hidden">
@@ -613,25 +645,32 @@
       <span class="text-sm text-muted-foreground">未打开文档</span>
     {/if}
     <span class="flex-1"></span>
-    {#if allProblems.length}
-      <UI.Button
-        variant="secondary"
-        onclick={() => (showProblems = true)}
-        title="存在校验问题，请先处理"
-      >
-        <TriangleAlert class="h-4 w-4 text-amber-600" />
-        问题
-        <span
-          class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
+    {#if doc}
+      {#if allProblems.length}
+        <UI.Button
+          variant="secondary"
+          onclick={() => (showProblems = true)}
+          title="存在校验问题，请先处理"
         >
-          {allProblems.length}
-        </span>
-      </UI.Button>
-    {:else}
-      <UI.Button variant="outline" onclick={doSave} disabled={busy || !doc}>
-        <Save class="h-4 w-4" /> 保存
-      </UI.Button>
-      <UI.Button variant="outline" onclick={doSaveAs} disabled={busy || !doc}>
+          <TriangleAlert class="h-4 w-4 text-amber-600" />
+          问题
+          <span
+            class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
+          >
+            {allProblems.length}
+          </span>
+        </UI.Button>
+      {:else if isDirty}
+        <UI.Button variant="outline" onclick={doSave} disabled={busy}>
+          <Save class="h-4 w-4" /> 保存
+        </UI.Button>
+      {:else}
+        <UI.Button variant="outline" onclick={doClose} disabled={busy}>
+          <X class="h-4 w-4" /> 关闭
+        </UI.Button>
+      {/if}
+
+      <UI.Button variant="outline" onclick={doSaveAs} disabled={busy}>
         <Download class="h-4 w-4" /> 另存为
       </UI.Button>
     {/if}

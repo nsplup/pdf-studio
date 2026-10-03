@@ -291,6 +291,15 @@
   export function markClean() {
     touched = false;
   }
+  export function reset() {
+    loadedID = "";
+    attemptedID = "";
+    labels = [];
+    baseIdx = -1;
+    touched = false;
+    busy = false;
+    syncBaseStore(); // 顺带把 labelBase 归零
+  }
 </script>
 
 {#if doc}

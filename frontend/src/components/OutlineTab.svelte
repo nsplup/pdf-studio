@@ -475,6 +475,15 @@
   export function markClean() {
     touched = false;
   }
+  /** 关闭文档时清空内部状态 */
+  export function reset() {
+    loadedID = "";
+    attemptedID = "";
+    tree = [];
+    textValue = "";
+    touched = false;
+    busy = false;
+  }
 </script>
 
 {#if doc}
