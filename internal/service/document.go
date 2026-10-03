@@ -34,6 +34,15 @@ func (s *DocumentService) Open(path string) (*DocInfo, error) {
 	return doc.docInfo(), nil
 }
 
+// CreateBlank 新建空白 PDF 会话（无源文件）。首次保存须走 SaveAs。
+func (s *DocumentService) CreateBlank() (*DocInfo, error) {
+	doc, err := s.store.CreateBlank()
+	if err != nil {
+		return nil, err
+	}
+	return doc.docInfo(), nil
+}
+
 // Info 查询文档状态。
 func (s *DocumentService) Info(id string) (*DocInfo, error) {
 	doc, err := s.store.Get(id)
@@ -337,6 +346,10 @@ func (s *DocumentService) Save(id string, opts *SaveOptions) (*DocInfo, error) {
 	}
 	doc.mu.Lock()
 	defer doc.mu.Unlock()
+
+	if doc.SourcePath == "" {
+		return nil, NewErr("NO_TARGET_PATH", "当前文档尚未保存过，请使用「另存为」")
+	}
 
 	out := doc.SourcePath + ".pdfstudio-tmp"
 	_ = os.Remove(out)
@@ -666,14 +679,6 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			return nil, WrapErr("IMPORT_FAILED", "导入内容无法解析", err)
 		}
 
-		// 渲染缓冲区缩略图（同步，保证放置前可预览）
-		if _, err := engine.RenderThumbnailsDir(bufPDF, bufDir, 160, 1, func(done, t int) {
-			report(done, t, fmt.Sprintf("渲染预览 %d/%d", done, t))
-		}); err != nil && count > 0 {
-			// 预览失败不阻塞，页面仍可插入
-			_ = count
-		}
-
 		// 计算每个 PDF 片段在缓冲区内的起始页，填充 Sources。
 		// 图片片段不是用户原始 PDF，不进入 Sources（无页标签/附件可合并）。
 		var sources []BufSource
@@ -707,14 +712,9 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 			_ = os.RemoveAll(old.ThumbsDir)
 		}
 
-		// 内容资源：为每个缓冲页渲染基图并注册 uuid（bufPDF 持久保留，保存装配时取页）
-		res := make([]string, 0, count)
-		for p := 1; p <= count; p++ {
-			u, uerr := s.ensurePageRes(bufPDF, p)
-			if uerr != nil {
-				return nil, uerr
-			}
-			res = append(res, u)
+		res, err := s.ensurePageResBatch(bufPDF, count)
+		if err != nil {
+			return nil, err
 		}
 		dims, _ := engine.PageDims(bufPDF)
 		pds := make([]PageDim, 0, len(dims))
@@ -724,6 +724,38 @@ func (s *DocumentService) Import(id string, req ImportRequest) (string, error) {
 		return map[string]any{"bufferID": bufID, "pageCount": count, "res": res, "dims": pds}, nil
 	})
 	return taskID, nil
+}
+
+// ScanImportCount 快速扫描导入文件列表的总页数（不解析内容、不渲染）。
+// 用于前端在 Import 前渲染等量 loading 占位符，避免只显示空白文档的 1 页。
+func (s *DocumentService) ScanImportCount(paths []string) (int, error) {
+	if len(paths) == 0 {
+		return 0, NewErr("INVALID_PARAM", "请先选择要导入的文件")
+	}
+	total := 0
+	for _, p := range paths {
+		st, err := os.Stat(p)
+		if err != nil || st.IsDir() {
+			return 0, NewErr("FILE_NOT_FOUND",
+				fmt.Sprintf("文件不存在: %s", filepath.Base(p)))
+		}
+		ext := strings.ToLower(filepath.Ext(p))
+		switch {
+		case ext == ".pdf":
+			n, err := engine.PageCount(p)
+			if err != nil {
+				return 0, WrapErr("IMPORT_FAILED",
+					fmt.Sprintf("解析 %s 失败", filepath.Base(p)), err)
+			}
+			total += n
+		case IsImageFile(p):
+			total += 1
+		default:
+			return 0, NewErr("INVALID_PARAM",
+				fmt.Sprintf("不支持的文件类型: %s", filepath.Base(p)))
+		}
+	}
+	return total, nil
 }
 
 // PlaceResult 放置结果：文档信息 + 合并进当前会话的辅助数据（前端据此同步各子页面）。

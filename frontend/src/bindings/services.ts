@@ -73,6 +73,7 @@ export interface PlaceResult {
 
 export const DocumentService = {
   Open: (path: string) => call<DocInfo>("DocumentService", "Open", path),
+  CreateBlank: () => call<DocInfo>("DocumentService", "CreateBlank"),
   Info: (id: string) => call<DocInfo>("DocumentService", "Info", id),
   Close: (id: string) => call<void>("DocumentService", "Close", id),
 
@@ -94,7 +95,9 @@ export const DocumentService = {
   /** 批量导入图片/PDF 到待放置缓冲区；任务完成 result 为 {bufferID,pageCount,res,dims} */
   Import: (id: string, paths: string[]) =>
     call<string>("DocumentService", "Import", id, { paths }),
-
+  /** 快速扫描导入文件的总页数（不解析内容），用于渲染占位符 */
+  ScanImportCount: (paths: string[]) =>
+    call<number>("DocumentService", "ScanImportCount", paths),
   /** 放置缓冲区内容（合并来源 PDF 的书签/页标签/附件） */
   PlaceBuffer: (id: string, atIndex: number, before: boolean) =>
     call<PlaceResult>("DocumentService", "PlaceBuffer", id, atIndex, before),

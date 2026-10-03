@@ -66,72 +66,82 @@ type pageSource struct {
 	Page int
 }
 
-func (s *DocumentService) ensurePageRes(workPath string, page int) (string, error) {
-	// 1) 渲染到唯一临时文件，顺手避免 res-hash.png 固定名并发互踩
-	tmpFile, err := os.CreateTemp("", "pdfstudio-res-*.png")
-	if err != nil {
-		return "", WrapErr("RENDER_FAILED", "创建临时文件失败", err)
-	}
-	tmp := tmpFile.Name()
-	_ = tmpFile.Close()
-	defer os.Remove(tmp)
-
-	if err := engine.RenderPagePNGToFile(workPath, page, 140, tmp); err != nil {
-		return "", WrapErr("RENDER_FAILED", fmt.Sprintf("渲染第 %d 页失败", page), err)
-	}
-
-	// 2) 生成随机 uuid，并原子占用资源目录
-	var u string
-	var resDir string
+// allocatePageRes 分配资源 uuid 并登记来源；不渲染任何像素。
+// 渲染由调用方批量完成（ensurePageResBatch）。
+func (s *DocumentService) allocatePageRes(workPath string, page int) (string, string, error) {
+	var u, resDir string
 	for i := 0; i < 20; i++ {
 		id, err := newResourceID()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-
-		// 随机 UUID 理论碰撞概率极低，但仍显式检查
 		if _, loaded := s.store.resReg.Load(id); loaded {
 			continue
 		}
-
 		dir := s.store.ws.ResourceDir(id)
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-			return "", err
+			return "", "", err
 		}
-
-		// 用 Mkdir 而不是 MkdirAll：目录已存在说明碰撞，换一个
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			if os.IsExist(err) {
 				continue
 			}
-			return "", err
+			return "", "", err
 		}
-
 		u, resDir = id, dir
 		break
 	}
 	if u == "" {
-		return "", NewErr("RESOURCE_ID_FAILED", "生成页面资源标识失败")
+		return "", "", NewErr("RESOURCE_ID_FAILED", "生成页面资源标识失败")
 	}
+	s.store.resReg.Store(u, pageSource{Path: workPath, Page: page})
+	return u, resDir, nil
+}
 
-	// 3) 落盘 140px 基图
-	dst := filepath.Join(resDir, "140.png")
-	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.RemoveAll(resDir)
-		return "", WrapErr("RENDER_FAILED", "保存页面资源失败", err)
+// ensurePageRes 分配资源并立即渲染 140px 基图（单页场景）。
+func (s *DocumentService) ensurePageRes(workPath string, page int) (string, error) {
+	u, dir, err := s.allocatePageRes(workPath, page)
+	if err != nil {
+		return "", err
 	}
-
-	// 4) 注册来源。随机 uuid 不会覆盖已有条目
-	s.store.resReg.Store(u, pageSource{
-		Path: workPath,
-		Page: page,
-	})
-
+	dst := filepath.Join(dir, "140.png")
+	if err := engine.RenderPagePNGToFile(workPath, page, 140, dst); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", WrapErr("RENDER_FAILED", fmt.Sprintf("渲染第 %d 页失败", page), err)
+	}
 	return u, nil
 }
 
-// PageResources 返回文档全部页面的资源 uuid 序列（首次调用会渲染全部页面的基图）。
-// 同时刷新 doc.res：该序列即页面逻辑顺序，前端据此拼装缩略图/预览地址。
+// ensurePageResBatch 一次打开文档，批量分配并渲染 1..count 页的 140px 基图。
+// 比逐页 ensurePageRes 快得多：省去 N-1 次 fitz.New/Close。
+// 返回的 uuid 列表按页码顺序排列。
+func (s *DocumentService) ensurePageResBatch(workPath string, count int) ([]string, error) {
+	res := make([]string, 0, count)
+	dirs := make([]string, 0, count)
+	pages := make([]int, 0, count)
+	outs := make([]string, 0, count)
+	for p := 1; p <= count; p++ {
+		u, dir, err := s.allocatePageRes(workPath, p)
+		if err != nil {
+			for _, d := range dirs {
+				_ = os.RemoveAll(d)
+			}
+			return nil, err
+		}
+		res = append(res, u)
+		dirs = append(dirs, dir)
+		pages = append(pages, p)
+		outs = append(outs, filepath.Join(dir, "140.png"))
+	}
+	if err := engine.RenderPagesToFiles(workPath, pages, outs, 140); err != nil {
+		for _, d := range dirs {
+			_ = os.RemoveAll(d)
+		}
+		return nil, WrapErr("RENDER_FAILED", "批量渲染页面资源失败", err)
+	}
+	return res, nil
+}
+
 func (s *DocumentService) PageResources(id string) ([]string, error) {
 	doc, err := s.store.Get(id)
 	if err != nil {
@@ -144,13 +154,9 @@ func (s *DocumentService) PageResources(id string) ([]string, error) {
 		copy(out, doc.res)
 		return out, nil
 	}
-	res := make([]string, 0, doc.PageCount)
-	for p := 1; p <= doc.PageCount; p++ {
-		u, err := s.ensurePageRes(doc.WorkPath, p)
-		if err != nil {
-			return nil, err
-		}
-		res = append(res, u)
+	res, err := s.ensurePageResBatch(doc.WorkPath, doc.PageCount)
+	if err != nil {
+		return nil, err
 	}
 	doc.res = res
 	out := make([]string, len(res))

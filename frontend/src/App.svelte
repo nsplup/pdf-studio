@@ -3,6 +3,7 @@
     DocumentService,
     type DocInfo,
     type OutlineNode,
+    type PageDim, // ← 新增
     type PageLabel,
   } from "./bindings/services";
   import { AppService } from "../bindings/pdfstudio/internal/service";
@@ -248,22 +249,93 @@
   // ---------- 工具栏 ----------
 
   async function doImport() {
-    if (!doc) return;
-    tab = "thumbs"; // 页面类操作回到缩略图视图
+    // 分支一：已有文档 → 原有「导入到缓冲区 + 放置」
+    if (doc) {
+      tab = "thumbs";
+      const files = await pickImport(true);
+      if (!files.length) return;
+      busy = true;
+      try {
+        const tid = await DocumentService.Import(doc.id, files);
+        const res = await waitTask(tid);
+        selected = new Set();
+        startPlacement("import", {
+          id: res?.bufferID ?? "",
+          pageCount: res?.pageCount ?? 0,
+          res: res?.res ?? [],
+          dims: res?.dims ?? [],
+        });
+      } catch (e: any) {
+        notify("err", `导入失败：${e?.message ?? e}`);
+      } finally {
+        busy = false;
+      }
+      return;
+    }
+
+    // 分支二：无文档 → 新建空白 + 导入 + 直接赋为页面列表
     const files = await pickImport(true);
     if (!files.length) return;
     busy = true;
+    let newDocID = "";
     try {
-      const tid = await DocumentService.Import(doc.id, files);
+      const d = await DocumentService.CreateBlank();
+      newDocID = d.id;
+      applyDocUpdate(d);
+
+      // baseline = 空（尚未保存过任何页面内容）
+      setPageRes(d.id, []);
+      setPageDims(d.id, []);
+      snapshotPageRes(d.id, []);
+
+      // 预扫描总页数 → 渲染等量 loading 占位符
+      let placeholderN = 0;
+      try {
+        placeholderN = await DocumentService.ScanImportCount(files);
+      } catch {
+        /* 扫描失败退化为空网格 */
+      }
+      if (placeholderN > 0) {
+        setPageRes(d.id, Array(placeholderN).fill(""));
+        setPageDims(
+          d.id,
+          Array.from({ length: placeholderN }, () => ({
+            width: 595,
+            height: 842,
+          })),
+        );
+      }
+
+      // 异步导入
+      const tid = await DocumentService.Import(d.id, files);
       const res = await waitTask(tid);
-      selected = new Set(); // 导入放置期间临时清空选中，避免误移动
-      startPlacement("import", {
-        id: res?.bufferID ?? "",
-        pageCount: res?.pageCount ?? 0,
-        res: res?.res ?? [],
-        dims: res?.dims ?? [],
-      });
+      const bres: string[] = res?.res ?? [];
+      const bdims: PageDim[] = (res?.dims ?? []).map((x: any) => ({
+        width: x.width,
+        height: x.height,
+      }));
+      if (!bres.length) throw new Error("导入内容为空");
+
+      const r = await DocumentService.AbsorbBufferAux(d.id, 1, true);
+
+      // 原子替换占位符为真实资源；不再 snapshotPageRes（保持 dirty）
+      replacePageRes(d.id, bres);
+      replacePageDims(d.id, bdims);
+
+      if (r?.addedOutline?.length) outlineTab?.addNodes(r.addedOutline);
+      if (r?.addedLabels?.length) labelsTab?.mergeLabels(r.addedLabels);
+      if (r?.addedAttachments?.length) await attachmentsTab?.reload();
+
+      tab = "thumbs";
+      selected = new Set();
+      notify("ok", `已导入 ${bres.length} 页`);
     } catch (e: any) {
+      if (newDocID) {
+        try {
+          await DocumentService.Close(newDocID);
+        } catch {}
+        currentDoc.set(null);
+      }
       notify("err", `导入失败：${e?.message ?? e}`);
     } finally {
       busy = false;
@@ -273,8 +345,12 @@
   async function doSave() {
     if (!doc) return;
     if (allProblems.length) {
-      // 理论上进不来（按钮已被替换），保留兜底
       showProblems = true;
+      return;
+    }
+    // 尚未保存过（新建空白文档导入后）：走另存为，先让用户选保存位置
+    if (!doc.sourcePath) {
+      await doSaveAs();
       return;
     }
     busy = true;
@@ -300,9 +376,9 @@
       showProblems = true;
       return;
     }
-    const out = await pickSavePDF(
-      doc.fileName.replace(/\.pdf$/i, "") + "-副本.pdf",
-    );
+    const base = (doc.fileName || "未命名").replace(/\.pdf$/i, "");
+    const suggested = doc.sourcePath ? `${base}-副本.pdf` : `${base}.pdf`;
+    const out = await pickSavePDF(suggested);
     if (!out) return;
     busy = true;
     try {
@@ -509,8 +585,9 @@
     <UI.Button onclick={openFile} disabled={busy}>
       <FolderOpen class="h-4 w-4" /> 打开 PDF
     </UI.Button>
-    <UI.Button variant="secondary" onclick={doImport} disabled={busy || !doc}>
-      <FileInput class="h-4 w-4" /> 导入图片 / PDF
+    <UI.Button variant="secondary" onclick={doImport} disabled={busy}>
+      <FileInput class="h-4 w-4" />
+      {doc ? "导入图片 / PDF" : "导入图片"}
     </UI.Button>
     <UI.Button
       variant="secondary"

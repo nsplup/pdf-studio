@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { MetaService, type PageLabel } from "../bindings/services";
+  import {
+    MetaService,
+    type PageLabel,
+    type DocInfo,
+  } from "../bindings/services";
   import {
     currentDoc,
     notify,
@@ -24,8 +28,8 @@
   let doc = $derived($currentDoc);
   /** 逻辑页数（含未保存的插入/删除） */
   let total = $derived(pageCount ?? 0);
-  let loadedKey = $state("");
-  let attemptedKey = $state("");
+  let loadedID = $state(""); // 原 loadedKey
+  let attemptedID = $state(""); // 原 attemptedKey
   /** UI 内使用 1-based 起始页；保存时转回 0-based */
   let labels = $state<
     { startPage: number; prefix: string; style: string; startValue: number }[]
@@ -67,17 +71,25 @@
 
   $effect(() => {
     const d = doc;
-    const key = d ? d.sourcePath : "";
-    if (!key || key === attemptedKey) return;
-    attemptedKey = key;
-    void load(key);
+    if (!d) return;
+    if (d.id === attemptedID) return;
+    attemptedID = d.id;
+    void load(d);
   });
 
-  async function load(path: string) {
+  async function load(d: DocInfo) {
     busy = true;
     touched = false;
     try {
-      const r = await MetaService.ReadPageLabels(path);
+      if (!d.sourcePath) {
+        // 尚未保存过：无源文件可读
+        labels = [];
+        baseIdx = -1;
+        syncBaseStore();
+        loadedID = d.id;
+        return;
+      }
+      const r = await MetaService.ReadPageLabels(d.sourcePath);
       const raw: PageLabel[] = r ?? [];
       labels = raw.map((l) => ({
         startPage: (l.startPage ?? 0) + 1,
@@ -86,10 +98,10 @@
         startValue: l.startValue ?? 1,
       }));
       autoSelectBase(raw);
-      loadedKey = path;
+      loadedID = d.id;
     } catch (e: any) {
       labels = [];
-      loadedKey = "";
+      loadedID = "";
       notify("err", `读取页标签失败：${e?.message ?? e}`);
     } finally {
       busy = false;
@@ -226,7 +238,7 @@
   // ---------- 供 App 调用的接口 ----------
 
   export function getLabels(): PageLabel[] | undefined {
-    if (loadedKey !== doc?.sourcePath) return undefined;
+    if (loadedID !== doc?.id) return undefined;
     return labels.map((l) => ({
       startPage: Math.max(0, l.startPage - 1),
       prefix: l.prefix || undefined,
@@ -238,7 +250,7 @@
   /** 导入放置后合并来源 PDF 的页标签区间（0-based；内部转 1-based 存储） */
   export function mergeLabels(added: PageLabel[]) {
     if (!added?.length) return;
-    if (loadedKey !== doc?.sourcePath) {
+    if (loadedID !== doc?.id) {
       notify("err", "页标签未成功加载，导入内容中的页标签未合并");
       return;
     }
@@ -267,7 +279,7 @@
   }
 
   export function retryLabels() {
-    attemptedKey = "";
+    attemptedID = "";
   }
 
   /** 是否有未保存的书签改动 */
@@ -430,7 +442,7 @@
               </div>
             </div>
           </div>
-        {:else if loadedKey !== doc?.sourcePath}
+        {:else if loadedID !== doc?.id}
           <div class="empty-sm">
             读取页标签失败，保存时将不修改页标签。
             <button class="underline" onclick={retryLabels}>重试</button>

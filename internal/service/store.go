@@ -128,6 +128,33 @@ func (s *DocStore) Create(sourcePath string) (*Document, error) {
 	return doc, nil
 }
 
+// CreateBlank 注册一个无源文件的空白文档会话。
+// 初始工作版本为一张 A4 空白页（仅占位）；页面内容随后由前端 pageSeq 完全覆盖。
+func (s *DocStore) CreateBlank() (*Document, error) {
+	id := fmt.Sprintf("doc-%d", s.seq.Add(1))
+	if err := os.MkdirAll(s.ws.DocDir(id), 0o755); err != nil {
+		return nil, WrapErr("WORKSPACE_CREATE", "初始化文档工作区失败", err)
+	}
+	doc := &Document{
+		ID:    id,
+		att:   &AttachSession{removed: map[string]bool{}},
+		store: s,
+		// SourcePath 故意留空：Save 会拒绝，须走 SaveAs
+	}
+	work := doc.nextVersion() // version 置 1，路径 = v1
+	if err := engine.CreateBlankPagePDF(types.Dim{Width: 595, Height: 842}, work); err != nil {
+		_ = os.RemoveAll(s.ws.DocDir(id))
+		return nil, WrapErr("PDF_CREATE_FAILED", "创建空白文档失败", err)
+	}
+	doc.WorkPath = work
+	if err := doc.refresh(); err != nil {
+		_ = os.RemoveAll(s.ws.DocDir(id))
+		return nil, err
+	}
+	s.docs.Store(id, doc)
+	return doc, nil
+}
+
 // Get 获取文档会话。
 func (s *DocStore) Get(id string) (*Document, error) {
 	v, ok := s.docs.Load(id)
@@ -241,18 +268,19 @@ func (d *Document) hasAllPageThumbsLocked() bool {
 	return true
 }
 
-// docInfoLocked 与 docInfo 相同，但要求调用方已持有 d.mu。
-// 所有已经在 doc.mu 保护下执行的写操作（Save/SaveAs/Insert/Delete/Move 等）
-// 必须调用本方法，否则会死锁。
 func (d *Document) docInfoLocked() *DocInfo {
 	pages := make([]PageDim, 0, len(d.Dims))
 	for _, dim := range d.Dims {
 		pages = append(pages, PageDim{Width: dim.Width, Height: dim.Height})
 	}
+	name := "未命名.pdf"
+	if d.SourcePath != "" {
+		name = filepath.Base(d.SourcePath)
+	}
 	info := &DocInfo{
 		ID:         d.ID,
 		SourcePath: d.SourcePath,
-		FileName:   filepath.Base(d.SourcePath),
+		FileName:   name,
 		PageCount:  d.PageCount,
 		Pages:      pages,
 		DocVer:     d.version.Load(),

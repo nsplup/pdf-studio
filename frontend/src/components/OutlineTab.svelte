@@ -41,8 +41,8 @@
   /** 页标签基准页偏移（纯前端派生）：显示页码 = 实际页码 - off；编辑回写时加回 off */
   let base = $derived($labelBase);
   let off = $derived(base.offset);
-  let loadedPath = $state("");
-  let attemptedPath = $state("");
+  let loadedID = $state(""); // 原 loadedPath
+  let attemptedID = $state(""); // 原 attemptedPath
   let tree = $state<EditNode[]>([]);
   let busy = $state(false);
   let mode = $state<"tree" | "text">("tree");
@@ -82,25 +82,27 @@
   $effect(() => {
     const d = doc;
     if (!d) return;
-    const path = d.sourcePath;
-    if (path === attemptedPath) return;
-    attemptedPath = path;
-    void load(path);
+    if (d.id === attemptedID) return;
+    attemptedID = d.id;
+    void load(d);
   });
 
-  async function load(path: string) {
+  async function load(d: DocInfo) {
     busy = true;
     touched = false;
     try {
-      const nodes = (await OutlineService.Read(path)) ?? [];
+      if (!d.sourcePath) {
+        // 尚未保存过：无源文件可读，从空开始（导入的书签随后由 addNodes 追加）
+        tree = [];
+        loadedID = d.id;
+        return;
+      }
+      const nodes = (await OutlineService.Read(d.sourcePath)) ?? [];
       tree = toEdit(nodes);
-      // 只有成功才置位；失败时保持旧值，getTree() 返回 undefined = 不修改
-      loadedPath = path;
+      loadedID = d.id;
     } catch (e: any) {
-      // 展示层清空，但不代表“用户要清空书签”。
-      // 关键：不写 loadedPath，保存时 getTree() 返回 undefined。
       tree = [];
-      loadedPath = "";
+      loadedID = "";
       notify("err", `读取书签失败：${e?.message ?? e}`);
     } finally {
       busy = false;
@@ -360,7 +362,7 @@
 
   // 把书签校验问题注册到全局，供 App 汇总展示
   $effect(() => {
-    if (loadedPath !== doc?.sourcePath) {
+    if (loadedID !== doc?.id) {
       outlineProblems.set([]);
       return;
     }
@@ -379,16 +381,14 @@
 
   // ---------- 供 App 调用的接口 ----------
 
-  /** 当前书签树（未加载过返回 undefined = 保存时不修改书签） */
   export function getTree(): OutlineNode[] | undefined {
-    if (loadedPath !== doc?.sourcePath) return undefined;
+    if (loadedID !== doc?.id) return undefined;
     return toOutline(tree);
   }
 
-  /** 导入放置后追加合并的书签（页码已由后端平移） */
   export function addNodes(nodes: OutlineNode[]) {
     if (!nodes?.length) return;
-    if (loadedPath !== doc?.sourcePath) {
+    if (loadedID !== doc?.id) {
       notify("err", "书签未成功加载，导入内容中的书签未合并");
       return;
     }
@@ -398,7 +398,7 @@
   }
 
   export function retryOutline() {
-    attemptedPath = "";
+    attemptedID = "";
   }
 
   /** 清空（待全局保存时生效）；应用内 confirm 弹窗二次确认 */
@@ -465,25 +465,6 @@
     tree = [...tree];
   }
 
-  /** 导出书签为缩进文本 */
-  async function exportText() {
-    if (!doc) return;
-    const out = await pickSaveAny(
-      doc.fileName.replace(/\.pdf$/i, "") + "-书签.txt",
-      "导出书签文本",
-    );
-    if (!out) return;
-    busy = true;
-    try {
-      await OutlineService.ExportText(doc.sourcePath, out);
-      notify("ok", `已导出：${out.split(/[\\/]/).pop()}`);
-    } catch (e: any) {
-      notify("err", `导出失败：${e?.message ?? e}`);
-    } finally {
-      busy = false;
-    }
-  }
-
   /** 是否有未保存的书签改动 */
   export function isDirty(): boolean {
     return touched;
@@ -520,7 +501,7 @@
           <div class="empty">
             <Loader class="h-5 w-5 animate-spin" /> 正在读取书签
           </div>
-        {:else if tree.length === 0 && loadedPath !== doc?.sourcePath}
+        {:else if tree.length === 0 && loadedID !== doc?.id}
           <div class="empty-sm">
             读取书签失败，保存时将不修改书签。
             <button class="underline" onclick={retryOutline}>重试</button>
@@ -562,11 +543,6 @@
         >
           <Trash2 class="h-4 w-4" /> 清空书签
         </UI.Button>
-        <div class="flex items-center gap-2">
-          <UI.Button variant="outline" onclick={exportText} disabled={busy}>
-            <FileOutput class="h-4 w-4" /> 导出书签文本
-          </UI.Button>
-        </div>
       </UI.CardFooter>
     </UI.Card>
   </div>
