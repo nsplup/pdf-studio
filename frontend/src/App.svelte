@@ -145,6 +145,16 @@
     r?.(ok);
   }
 
+  function removeFileExtension(str: string): string {
+    if (typeof str !== "string") {
+      throw new TypeError("参数必须是字符串");
+    }
+
+    // 匹配：普通字符 + 最后一个点 + 点后的非点/非路径分隔符字符
+    // 然后用前面的普通字符替换整个匹配，相当于删除扩展名
+    return str.replace(/([^./\\])\.[^./\\]+$/, "$1");
+  }
+
   /** 打开 PDF（按路径复用全局会话） */
   async function openFile() {
     if (isDirty) {
@@ -577,6 +587,15 @@
 
   async function doClose() {
     if (!doc) return;
+    if (isDirty) {
+      const ok = await askConfirm({
+        title: "有未保存的改动",
+        body: "关闭文档将丢失未保存的改动，是否继续？",
+        confirmText: "放弃改动并关闭",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
     busy = true;
     try {
       const id = doc.id;
@@ -605,75 +624,143 @@
       busy = false;
     }
   }
+  /** 判断事件目标是否为可编辑控件（输入框 / 文本域 / contenteditable） */
+  function isEditableTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof HTMLElement)) return false;
+    const tag = t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (t.isContentEditable) return true;
+    return false;
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.repeat) return;
+
+    const mod = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+
+    // ---- 带修饰键：任何焦点位置都生效（含输入框内） ----
+    if (mod && !e.altKey) {
+      if (key === "s") {
+        e.preventDefault();
+        if (!doc || busy) return;
+        if (e.shiftKey) void doSaveAs();
+        else void doSave();
+        return;
+      }
+      if (key === "o") {
+        e.preventDefault();
+        if (busy) return;
+        void openFile();
+        return;
+      }
+      if (key === "w") {
+        e.preventDefault();
+        if (busy) return;
+        void doClose();
+        return;
+      }
+      return;
+    }
+
+    // ---- 无修饰键：仅当焦点不在输入控件中才生效 ----
+    if (isEditableTarget(e.target)) return;
+
+    if (e.key === "Escape") {
+      if (confirmState.open) {
+        e.preventDefault();
+        resolveConfirm(false);
+        return;
+      }
+      if (showProblems) {
+        e.preventDefault();
+        showProblems = false;
+        return;
+      }
+      if (placing) {
+        e.preventDefault();
+        void handleCancelPlace();
+        return;
+      }
+    }
+  }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
 <div class="flex h-screen w-screen flex-col overflow-hidden">
   <!-- 顶部工具栏（放置模式下暗化禁用） -->
   <header
-    class="flex h-14 shrink-0 items-center gap-3 border-b bg-card px-4 transition-opacity"
+    class="flex h-14 shrink-0 items-center gap-3 overflow-hidden border-b bg-card px-4 transition-opacity"
     class:dimmed={placing}
   >
-    <UI.Button onclick={openFile} disabled={busy}>
-      <FolderOpen class="h-4 w-4" /> 打开 PDF
-    </UI.Button>
-    <UI.Button variant="secondary" onclick={doImport} disabled={busy}>
-      <FileInput class="h-4 w-4" />
-      {doc ? "导入图片 / PDF" : "导入图片"}
-    </UI.Button>
-    <UI.Button
-      variant="secondary"
-      onclick={beginBlank}
-      disabled={busy || !doc || placing}
-    >
-      <FilePlus2 class="h-4 w-4" /> 插入空白页
-    </UI.Button>
-    <span class="flex-1"></span>
-    {#if doc}
-      <span
-        class="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground"
+    <div class="flex shrink-0 items-center gap-2">
+      <UI.Button onclick={openFile} disabled={busy} title="打开文档 (Ctrl+O)">
+        <FolderOpen class="h-4 w-4" /> 打开 PDF
+      </UI.Button>
+      <UI.Button variant="secondary" onclick={doImport} disabled={busy}>
+        <FileInput class="h-4 w-4" />
+        {doc ? "导入图片 / PDF" : "导入图片"}
+      </UI.Button>
+      <UI.Button
+        variant="secondary"
+        onclick={beginBlank}
+        disabled={busy || !doc || placing}
       >
-        {#if isDirty}
-          <CircleDotDashedIcon
-            class="h-3.5 w-3.5 shrink-0 text-amber-600"
-            aria-label="有未保存的改动"
-          />
-        {/if}
-        <span class="truncate">{doc.fileName}</span>
-        <span class="shrink-0">· {logicalCount(doc.id, doc.pageCount)} 页</span>
-      </span>
-    {:else}
-      <span class="text-sm text-muted-foreground">未打开文档</span>
-    {/if}
-    <span class="flex-1"></span>
-    {#if doc}
-      {#if allProblems.length}
-        <UI.Button
-          variant="secondary"
-          onclick={() => (showProblems = true)}
-          title="存在校验问题，请先处理"
+        <FilePlus2 class="h-4 w-4" /> 插入空白页
+      </UI.Button>
+    </div>
+    <div
+      class="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-sm text-muted-foreground"
+    >
+      {#if doc}
+        <!-- 固定位置：脏点（无论显示与否都占位，避免文件名位移） -->
+        <span class="grid h-4 w-4 shrink-0 place-items-center">
+          {#if isDirty}
+            <CircleDotDashedIcon
+              class="h-3.5 w-3.5 text-amber-600"
+              aria-label="有未保存的改动"
+            />
+          {/if}
+        </span>
+        <!-- 固定宽度 + 左对齐 + 截断 -->
+        <span
+          class="min-w-0 max-w-[40ch] flex-1 truncate text-left"
+          title={removeFileExtension(doc.fileName)}
+          >{removeFileExtension(doc.fileName)}</span
         >
-          <TriangleAlert class="h-4 w-4 text-amber-600" />
-          问题
-          <span
-            class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
-          >
-            {allProblems.length}
-          </span>
-        </UI.Button>
-      {:else if isDirty}
-        <UI.Button variant="outline" onclick={doSave} disabled={busy}>
-          <Save class="h-4 w-4" /> 保存
+        <!-- 固定位置：关闭 -->
+        <UI.Button
+          variant="ghost"
+          size="icon"
+          onclick={doClose}
+          disabled={busy}
+          title="关闭文档 (Ctrl+W)"
+          aria-label="关闭文档"
+        >
+          <X class="h-4 w-4" />
         </UI.Button>
       {:else}
-        <UI.Button variant="outline" onclick={doClose} disabled={busy}>
-          <X class="h-4 w-4" /> 关闭
-        </UI.Button>
+        <span class="text-sm text-muted-foreground">未打开文档</span>
       {/if}
-
-      <UI.Button variant="outline" onclick={doSaveAs} disabled={busy}>
+    </div>
+    <div class="flex shrink-0 items-center gap-2" class:invisible={!doc}>
+      <UI.Button
+        variant={isDirty ? "default" : "outline"}
+        onclick={doSave}
+        disabled={busy || !isDirty || !doc}
+        title="保存 (Ctrl+S)"
+      >
+        <Save class="h-4 w-4" /> 保存
+      </UI.Button>
+      <UI.Button
+        variant="outline"
+        onclick={doSaveAs}
+        disabled={busy || !doc}
+        title="另存为 (Ctrl+Shift+S)"
+      >
         <Download class="h-4 w-4" /> 另存为
       </UI.Button>
-    {/if}
+    </div>
   </header>
 
   <!-- 放置模式提示条 -->
@@ -792,7 +879,7 @@
     {#each tabs as t (t.id)}
       <button
         class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors disabled:pointer-events-none disabled:opacity-50
-               {tab === t.id
+           {tab === t.id
           ? 'bg-primary/15 font-medium text-foreground'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
         onclick={() => (tab = t.id)}
@@ -800,14 +887,31 @@
       >
         <t.icon class="h-4 w-4 {tab === t.id ? 'text-primary' : ''}" />
         {t.label}
+        {#if t.id === "thumbs" && doc}
+          <span
+            class="rounded-full bg-primary/15 px-1.5 py-px text-[10px] font-semibold tabular-nums text-primary"
+          >
+            {logicalCount(doc.id, doc.pageCount)}
+          </span>
+        {/if}
       </button>
     {/each}
-    {#if busy}
-      <span
-        class="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"
-      >
-        <Loader class="h-3.5 w-3.5 animate-spin" /> 处理中
-      </span>
+    {#if allProblems.length}
+      <div class="ml-auto">
+        <UI.Button
+          variant="secondary"
+          onclick={() => (showProblems = true)}
+          title="存在校验问题，请先处理"
+        >
+          <TriangleAlert class="h-4 w-4 text-amber-600" />
+          问题
+          <span
+            class="ml-0.5 rounded-full bg-amber-500/20 px-1.5 text-xs font-medium text-amber-600"
+          >
+            {allProblems.length}
+          </span>
+        </UI.Button>
+      </div>
     {/if}
   </footer>
 </div>
