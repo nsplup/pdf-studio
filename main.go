@@ -50,6 +50,7 @@ func main() {
 	outlineService := service.NewOutlineService(bus)
 	metaService := service.NewMetaService(bus, store)
 
+	var win *application.WebviewWindow
 	app := application.New(application.Options{
 		Name:        "PDF Studio",
 		Description: "本地离线 PDF 编辑器",
@@ -89,6 +90,19 @@ func main() {
 			go appService.RequestClose()
 			return false
 		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.pdfstudio.desktop", // 反向域名格式的唯一标识
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				// 第二个实例启动时，唤醒已有窗口
+				if win != nil {
+					if win.IsMinimised() {
+						win.UnMinimise()
+					}
+					win.Show()
+					win.Focus()
+				}
+			},
+		},
 		Logger:   logger,
 		LogLevel: slog.LevelInfo,
 	})
@@ -103,7 +117,7 @@ func main() {
 		ws.Cleanup()
 	})
 
-	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "PDF Studio",
 		Width:     1360,
 		Height:    880,
