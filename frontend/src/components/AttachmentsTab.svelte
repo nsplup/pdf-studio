@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MetaService, type AttachmentInfo } from "../bindings/services";
+  import { MetaService, type AttachmentInfo } from "@bindings";
   import { Eraser } from "lucide-svelte";
   import { Dialogs } from "@wailsio/runtime";
   import { currentDoc, notify, attachmentsDirty } from "../stores";

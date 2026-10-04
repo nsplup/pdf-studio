@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import path from "node:path"
 
 // Wails v3 官方约定：
 //   - 开发端口由 wails3 dev 注入 WAILS_VITE_PORT（默认 9245）
@@ -17,5 +18,10 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     target: "chrome120",
+  },
+  resolve: {
+    alias: {
+      '@bindings': path.resolve(__dirname, 'bindings/pdfstudio/internal/service'),
+    },
   },
 });

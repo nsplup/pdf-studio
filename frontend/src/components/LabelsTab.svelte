@@ -3,7 +3,7 @@
     MetaService,
     type PageLabel,
     type DocInfo,
-  } from "../bindings/services";
+  } from "@bindings";
   import {
     currentDoc,
     notify,

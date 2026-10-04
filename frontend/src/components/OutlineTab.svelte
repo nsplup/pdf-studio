@@ -3,15 +3,13 @@
     OutlineService,
     type OutlineNode,
     type DocInfo,
-  } from "../bindings/services";
-  import { pickSaveAny } from "../lib/dialogs";
+  } from "@bindings";
   import ace from "ace-builds";
   import "ace-builds/src-noconflict/mode-text";
   import "ace-builds/src-noconflict/theme-tomorrow_night";
   import "ace-builds/src-noconflict/ext-searchbox"; // Ctrl+F / Ctrl+H 查找替换
   import {
     currentDoc,
-    applyDocUpdate,
     notify,
     labelBase,
     toViewPage,
@@ -27,7 +25,6 @@
     Trash2,
     Loader,
     ListTree,
-    FileOutput,
     Plus,
     FileQuestionMark,
     Type,

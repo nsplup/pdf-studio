@@ -61,10 +61,7 @@ type DocInfo struct {
 	PageCount  int       `json:"pageCount"`
 	Pages      []PageDim `json:"pages"`
 	HasThumbs  bool      `json:"hasThumbs"`
-	// DocVer 文档修订号：任何改变页面内容的操作后递增，前端用于整体缓存失效
-	DocVer int64 `json:"docVer"`
-	// PageRes 页面内容资源 uuid 序列（内容寻址，前端据此拼装缩略图/预览地址）
-	PageRes []string `json:"pageRes,omitempty"`
+	PageRes    []string  `json:"pageRes,omitempty"`
 }
 
 // PageDim 页面尺寸（pt）。
@@ -283,7 +280,6 @@ func (d *Document) docInfoLocked() *DocInfo {
 		FileName:   name,
 		PageCount:  d.PageCount,
 		Pages:      pages,
-		DocVer:     d.version.Load(),
 	}
 	info.HasThumbs = d.hasAllPageThumbsLocked()
 	if len(d.res) == d.PageCount {

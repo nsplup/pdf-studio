@@ -10,7 +10,10 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@bindings": ["./bindings/pdfstudio/internal/service"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"]
 }

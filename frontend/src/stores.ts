@@ -1,6 +1,6 @@
 import { writable, get } from "svelte/store";
 import { Events } from "@wailsio/runtime";
-import type { DocInfo, PageDim } from "./bindings/services";
+import type { DocInfo, PageDim } from "@bindings";
 
 // ---------- 任务进度 ----------
 
@@ -146,8 +146,9 @@ export function fromViewPage(view: number, offset: number): number | null {
 export async function openDocument(path: string): Promise<DocInfo> {
   const cur = get(currentDoc);
   if (cur && cur.sourcePath === path) return cur;
-  const { DocumentService } = await import("./bindings/services");
+  const { DocumentService } = await import("@bindings");
   const doc = await DocumentService.Open(path);
+  if (doc === null) throw new TypeError('文档类型不能为 null');
   currentDoc.set(doc);
   return doc;
 }
