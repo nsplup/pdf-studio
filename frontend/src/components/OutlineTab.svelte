@@ -1,9 +1,6 @@
 <script lang="ts">
-  import {
-    OutlineService,
-    type OutlineNode,
-    type DocInfo,
-  } from "@bindings";
+  import { onDestroy } from "svelte";
+  import { OutlineService, type OutlineNode, type DocInfo } from "@bindings";
   import ace from "ace-builds";
   import "ace-builds/src-noconflict/mode-text";
   import "ace-builds/src-noconflict/theme-tomorrow_night";
@@ -179,24 +176,22 @@
   // ---------- Ace Editor（文本模式） ----------
   let aceEl: HTMLDivElement | undefined = $state();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let ed: any = null;
+  let ed = $state<any>(null);
   /** ace → 数据 更新中，抑制外部回写 */
   let aceLock = false;
   let ro: ResizeObserver | null = null;
 
-  // 离开文本模式：销毁实例（容器随 {#if} 卸载）
-  $effect(() => {
-    if (mode !== "text" && ed) {
-      ro?.disconnect();
-      ro = null;
-      ed.destroy();
-      ed = null;
-    }
+  onDestroy(() => {
+    ro?.disconnect();
+    ro = null;
+    ed?.destroy();
+    ed = null;
   });
 
   // 进入文本模式：容器挂载后创建实例
   $effect(() => {
-    if (mode !== "text" || !aceEl || ed) return;
+    if (mode !== "text") return; // 没进过文本模式就不建
+    if (!aceEl || ed) return; // 建过就不重建
     ed = ace.edit(aceEl, {
       value: textValue,
       mode: "ace/mode/text",
@@ -238,16 +233,11 @@
     const o = off;
     const offChanged = o !== lastWriteOff;
     lastWriteOff = o;
+    if (!ed) return; // ← 只判断 ed，不判断 mode
     const next = serialize(tree);
 
-    if (!ed || mode !== "text") return;
-
-    // ★ 容器不可见（display:none / 父级隐藏 / 尺寸为 0）时：
-    //   只更新数据模型，不碰 renderer，避免在 0 尺寸容器上排版产生脏缓存。
-    //   等容器可见时由 ResizeObserver 统一同步 + resize + updateFull。
     const invisible =
       !aceEl || aceEl.clientHeight === 0 || aceEl.clientWidth === 0;
-
     if (invisible) {
       if (ed.getValue() !== next) {
         aceLock = true;
@@ -258,7 +248,6 @@
     }
 
     if (!offChanged && ed.isFocused()) return;
-
     if (ed.getValue() !== next) {
       aceLock = true;
       ed.setValue(next, 1);
@@ -274,17 +263,21 @@
   // 校验标注：直接使用 Ace Session 内置 annotations（装订线警告标记 + 行悬停提示）
   $effect(() => {
     const ps = problems;
-    const tv = mode === "text" ? textValue : serialize(tree);
+    void tree; // 显式依赖，保证 tree 变了会重算
     if (!ed || mode !== "text") return;
-    const validLines: number[] = [];
-    tv.split("\n").forEach((l: string, i: number) => {
-      if (/\t\d+\s*$/.test(l)) validLines.push(i);
+
+    // 以 Ace 实际内容为准，避免与 textValue 的批处理窗口错位
+    const tv: string = ed.getValue();
+    const nodeRows: number[] = [];
+    tv.split("\n").forEach((l, i) => {
+      if (l.trim()) nodeRows.push(i); // ← 与 parseText 的 "哪些行算节点" 完全一致
     });
+
     ed.session.setAnnotations(
       ps
-        .filter((p) => p.order >= 0 && p.order < validLines.length)
+        .filter((p) => p.order >= 0 && p.order < nodeRows.length)
         .map((p) => ({
-          row: validLines[p.order],
+          row: nodeRows[p.order],
           column: 0,
           text: p.detail,
           type: "warning" as const,
@@ -474,12 +467,22 @@
   }
   /** 关闭文档时清空内部状态 */
   export function reset() {
+    ro?.disconnect();
+    ro = null;
+    ed?.destroy();
+    ed = null;
+
     loadedID = "";
     attemptedID = "";
     tree = [];
     textValue = "";
     touched = false;
     busy = false;
+    // 其他状态按需一起清（lastMode / lastTreeJson / lastSyncOff / lastWriteOff 等）
+    lastMode = mode;
+    lastTreeJson = "";
+    lastSyncOff = -1;
+    lastWriteOff = -1;
   }
 </script>
 
@@ -513,32 +516,38 @@
             读取书签失败，保存时将不修改书签。
             <button class="underline" onclick={retryOutline}>重试</button>
           </div>
-        {:else if mode === "text"}
-          <div
-            bind:this={aceEl}
-            class="ace-shell h-[calc(100vh-313px)] w-full overflow-hidden rounded-md border border-input"
-          ></div>
-          <p class="mt-2 text-xs text-muted-foreground">
-            每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点
-          </p>
         {:else}
-          <div class="tree-wrap">
-            {#each tree as node, i (node)}
-              <TreeNode
-                bind:node={tree[i]}
-                path={[i]}
-                {onChanged}
-                {onRemove}
-                {invalidSet}
-                pageOffset={off}
-                onInsertAbove={(p) => insertSibling(p, 0)}
-                onInsertBelow={(p) => insertSibling(p, 1)}
-              />
-            {/each}
-            {#if tree.length === 0}
-              <div class="empty-sm">暂无书签，可在此处添加或导入后自动合并</div>
-            {/if}
+          <div style:display={mode === "text" ? "block" : "none"}>
+            <div
+              bind:this={aceEl}
+              class="ace-shell h-[calc(100vh-314px)] w-full overflow-hidden rounded-md border border-input"
+            ></div>
+            <p class="mt-2 text-xs text-muted-foreground">
+              每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点
+            </p>
           </div>
+
+          {#if mode === "tree"}
+            <div class="tree-wrap h-[calc(100vh-290px)] overflow-y-auto">
+              {#each tree as node, i (node)}
+                <TreeNode
+                  bind:node={tree[i]}
+                  path={[i]}
+                  {onChanged}
+                  {onRemove}
+                  {invalidSet}
+                  pageOffset={off}
+                  onInsertAbove={(p) => insertSibling(p, 0)}
+                  onInsertBelow={(p) => insertSibling(p, 1)}
+                />
+              {/each}
+              {#if tree.length === 0}
+                <div class="empty-sm">
+                  暂无书签，可在此处添加或导入后自动合并
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
       </UI.CardContent>
       <UI.CardFooter class="justify-between gap-3">
