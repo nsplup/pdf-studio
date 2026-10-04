@@ -266,7 +266,7 @@
       if (!files.length) return;
       busy = true;
       try {
-        const tid = await DocumentService.Import(doc.id, {paths: files});
+        const tid = await DocumentService.Import(doc.id, { paths: files });
         const res = await waitTask(tid);
         selected = new Set();
         startPlacement("import", {
@@ -290,7 +290,7 @@
     let newDocID = "";
     try {
       const d = await DocumentService.CreateBlank();
-      if (d === null) throw new TypeError('文档类型不能为 null');
+      if (d === null) throw new TypeError("文档类型不能为 null");
       newDocID = d.id;
       applyDocUpdate(d);
 
@@ -318,7 +318,7 @@
       }
 
       // 异步导入
-      const tid = await DocumentService.Import(d.id, {paths: files});
+      const tid = await DocumentService.Import(d.id, { paths: files });
       const res = await waitTask(tid);
       const bres: string[] = res?.res ?? [];
       const bdims: PageDim[] = (res?.dims ?? []).map((x: any) => ({
@@ -367,7 +367,7 @@
     busy = true;
     try {
       const d = await DocumentService.Save(doc.id, collectSaveOptions());
-      if (d === null) throw new TypeError('文档类型不能为 null');
+      if (d === null) throw new TypeError("文档类型不能为 null");
       applyDocUpdate(d);
       if (Array.isArray($pageRes[doc.id]))
         snapshotPageRes(doc.id, $pageRes[doc.id] as string[]);
@@ -395,7 +395,7 @@
     busy = true;
     try {
       const d = await DocumentService.SaveAs(doc.id, out, collectSaveOptions());
-      if (d === null) throw new TypeError('文档类型不能为 null');
+      if (d === null) throw new TypeError("文档类型不能为 null");
       applyDocUpdate(d);
       if (Array.isArray($pageRes[doc.id]))
         snapshotPageRes(doc.id, $pageRes[doc.id] as string[]);
@@ -687,6 +687,11 @@
       }
     }
   }
+
+  /** 界面就绪 */
+  $effect(() => {
+    void AppService.Ready();
+  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
