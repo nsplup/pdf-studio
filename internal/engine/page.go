@@ -66,9 +66,26 @@ func RemovePages(inPath, outPath, selectedPages string) error {
 }
 
 // TrimPages 仅保留 selectedPages 指定页，写入 outPath。
+// 命名目标迁移失败时剥离命名目标树后重试
+// （副作用：GoTo 链接退化为直接页引用或失效）。
 func TrimPages(inPath, outPath, selectedPages string) error {
-	if err := api.TrimFile(inPath, outPath, splitSelection(selectedPages), Config()); err != nil {
+	sel := splitSelection(selectedPages)
+	err := api.TrimFile(inPath, outPath, sel, Config())
+	if err == nil {
+		return nil
+	}
+
+	dir := filepath.Dir(outPath)
+	clean := filepath.Join(dir, fmt.Sprintf(".trim-clean-%d.pdf", time.Now().UnixNano()))
+	cleanupFile(clean)
+	defer cleanupFile(clean)
+
+	if serr := stripNamedDests(inPath, clean); serr != nil {
+		// 剥离也失败：把原始错误抛给上层，便于定位
 		return fmt.Errorf("裁剪页面失败: %w", err)
+	}
+	if err2 := api.TrimFile(clean, outPath, sel, Config()); err2 != nil {
+		return fmt.Errorf("裁剪页面失败: %w", err2)
 	}
 	return nil
 }
@@ -139,6 +156,11 @@ func InsertBlankPages(inPath, outPath string, pageIndex, count int, before bool,
 
 // InsertFromPDF 将 srcPath 中 srcPages 指定的页插入到 inPath 的 atIndex 位置（1-based， atIndex=1 表示最前）。
 // 实现方式：前后分段裁剪 + 三段合并，书签由 pdfcpu 合并时自动保留。
+//
+// 命名目标兜底：图片导入路径生成的孤儿命名目标（xref 不完整）会让 pdfcpu
+// 的命名目标迁移报 "no xref entry found"。此处对分段裁剪与最终合并两步都
+// 做兜底——失败时剥离相关文件的命名目标树后重试，使插入操作能完成。
+// 副作用：源文件的命名目标丢失，直接页引用不受影响。
 func InsertFromPDF(inPath string, atIndex int, srcPath, srcPages string, outPath string) error {
 	conf := Config()
 	total, err := PageCount(inPath)
@@ -152,13 +174,43 @@ func InsertFromPDF(inPath string, atIndex int, srcPath, srcPages string, outPath
 	tmp := &TempNames{}
 	defer tmp.Cleanup()
 
+	// stripped 缓存：同一源文件只需剥离一次命名目标树。
+	stripped := map[string]string{}
+	cleanOf := func(src string) (string, error) {
+		if p, ok := stripped[src]; ok {
+			return p, nil
+		}
+		p := tmp.New(fmt.Sprintf("clean-%d.pdf", len(stripped)))
+		if err := stripNamedDests(src, p); err != nil {
+			return "", err
+		}
+		stripped[src] = p
+		return p, nil
+	}
+	// trim 封装 api.TrimFile；命名目标迁移失败时，改用剥离后的源文件重试。
+	trim := func(src, out string, pages []string, what string) error {
+		trimErr := api.TrimFile(src, out, pages, conf)
+		if trimErr == nil {
+			return nil
+		}
+		clean, cerr := cleanOf(src)
+		if cerr != nil {
+			// 剥离也失败：保留 pdfcpu 原始诊断信息，便于定位根因。
+			return fmt.Errorf("%s失败: %w", what, trimErr)
+		}
+		if err := api.TrimFile(clean, out, pages, conf); err != nil {
+			return fmt.Errorf("%s失败: %w", what, err)
+		}
+		return nil
+	}
+
 	var headPath, tailPath, srcPath2 string
 	var parts []string
 
 	if atIndex > 1 {
 		headPath = tmp.New("head.pdf")
-		if err := api.TrimFile(inPath, headPath, []string{fmt.Sprintf("1-%d", atIndex-1)}, conf); err != nil {
-			return fmt.Errorf("分段失败: %w", err)
+		if err := trim(inPath, headPath, []string{fmt.Sprintf("1-%d", atIndex-1)}, "分段"); err != nil {
+			return err
 		}
 		parts = append(parts, headPath)
 	}
@@ -166,21 +218,37 @@ func InsertFromPDF(inPath string, atIndex int, srcPath, srcPages string, outPath
 	srcPath2 = srcPath
 	if srcPages != "" && srcPages != "*" && srcPages != "1-*" {
 		srcPath2 = tmp.New("src.pdf")
-		if err := api.TrimFile(srcPath, srcPath2, splitSelection(srcPages), conf); err != nil {
-			return fmt.Errorf("提取来源页失败: %w", err)
+		if err := trim(srcPath, srcPath2, splitSelection(srcPages), "提取来源页"); err != nil {
+			return err
 		}
 	}
 	parts = append(parts, srcPath2)
 
 	if atIndex <= total {
 		tailPath = tmp.New("tail.pdf")
-		if err := api.TrimFile(inPath, tailPath, []string{fmt.Sprintf("%d-%d", atIndex, total)}, conf); err != nil {
-			return fmt.Errorf("分段失败: %w", err)
+		if err := trim(inPath, tailPath, []string{fmt.Sprintf("%d-%d", atIndex, total)}, "分段"); err != nil {
+			return err
 		}
 		parts = append(parts, tailPath)
 	}
 
-	if err := api.MergeCreateFile(parts, outPath, false, conf); err != nil {
+	// 合并：srcPages=="*" 时 srcPath2 就是原始 srcPath，未经 trim，
+	// 其中的孤儿命名目标会在 MergeCreateFile 里再次触发迁移失败。
+	// 失败时对每个片段剥离命名目标树后重试。parts 均为临时文件，
+	// 剥离不影响用户原始数据。
+	mergeErr := api.MergeCreateFile(parts, outPath, false, conf)
+	if mergeErr == nil {
+		return nil
+	}
+	cleaned := make([]string, 0, len(parts))
+	for i, p := range parts {
+		cp := tmp.New(fmt.Sprintf("mclean-%d.pdf", i))
+		if err := stripNamedDests(p, cp); err != nil {
+			return fmt.Errorf("合并写入失败: %w", mergeErr)
+		}
+		cleaned = append(cleaned, cp)
+	}
+	if err := api.MergeCreateFile(cleaned, outPath, false, conf); err != nil {
 		return fmt.Errorf("合并写入失败: %w", err)
 	}
 	return nil
