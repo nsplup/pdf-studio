@@ -210,15 +210,19 @@
     width: 26px;
     flex: none;
     border-radius: 6px;
+    color: hsl(var(--background));
+    transition: color 0.2s, background-color 0.2s;
+  }
+  .tree-row:hover .tree-act,
+  .tree-row:focus-within .tree-act {
     color: hsl(var(--muted-foreground));
-    transition: background-color 0.12s;
   }
   .tree-act:hover {
     background: hsl(var(--primary) / 0.12);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary)) !important;
   }
   .tree-danger:hover {
     background: hsl(var(--destructive) / 0.12);
-    color: hsl(var(--destructive));
+    color: hsl(var(--destructive)) !important;
   }
 </style>
