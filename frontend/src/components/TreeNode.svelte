@@ -210,7 +210,7 @@
     width: 26px;
     flex: none;
     border-radius: 6px;
-    color: hsl(var(--background));
+    color: rgba(0, 0, 0, 0);
     transition: color 0.2s, background-color 0.2s;
   }
   .tree-row:hover .tree-act,
