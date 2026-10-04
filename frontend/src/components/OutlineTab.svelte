@@ -523,7 +523,7 @@
           </p>
         {:else}
           <div class="tree-wrap">
-            {#each tree as node, i (i)}
+            {#each tree as node, i (node)}
               <TreeNode
                 bind:node={tree[i]}
                 path={[i]}

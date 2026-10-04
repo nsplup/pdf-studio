@@ -159,7 +159,7 @@
     </button>
   </div>
   {#if node.expanded}
-    {#each node.kids as kid, i (i)}
+    {#each node.kids as kid, i (kid)}
       <Self
         bind:node={node.kids[i]}
         path={[...path, i]}
@@ -211,14 +211,7 @@
     flex: none;
     border-radius: 6px;
     color: hsl(var(--muted-foreground));
-    opacity: 0;
-    transition:
-      opacity 0.12s,
-      background-color 0.12s;
-  }
-  .tree-row:hover .tree-act,
-  .tree-row:focus-within .tree-act {
-    opacity: 1;
+    transition: background-color 0.12s;
   }
   .tree-act:hover {
     background: hsl(var(--primary) / 0.12);
