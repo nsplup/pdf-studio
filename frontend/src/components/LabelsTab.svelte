@@ -207,7 +207,7 @@
         problems.push({
           kind: "order",
           title: `第 ${i + 1} 个区间`,
-          detail: `${reason}；起始页必须严格递增`,
+          detail: `${reason}`,
           index: i,
         });
       }
