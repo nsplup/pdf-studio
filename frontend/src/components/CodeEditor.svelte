@@ -706,23 +706,15 @@
     --pad-right: 12px;
     --gutter-w: 3.5rem;
     --text-gap: 12px;
-    /* 文本区域垂直基线微调：镜像层相对 textarea 上移，修正几像素错位 */
-    --baseline-nudge: 2.5px;
+    --font-size: 14px;
 
     position: relative;
     overflow-y: auto;
     overflow-x: hidden;
     background: #1d1f21;
     color: #c5c8c6;
-    font-family: var(
-      --font-mono,
-      ui-monospace,
-      SFMono-Regular,
-      Menlo,
-      Consolas,
-      monospace
-    );
-    font-size: 13px;
+    font-family: monospace;
+    font-size: var(--font-size, 14px);
     line-height: var(--line-height, 20px);
     letter-spacing: normal;
     tab-size: var(--tab-size, 4);
@@ -741,7 +733,7 @@
     z-index: 1;
     /* 让文本区域的鼠标事件穿透到 textarea，仅图标重新启用 */
     pointer-events: none;
-    padding: calc(var(--pad-y) - var(--baseline-nudge)) var(--pad-right)
+    padding: var(--pad-y) var(--pad-right)
       var(--pad-y) var(--gutter-w);
     color: transparent;
     user-select: none;
@@ -792,7 +784,7 @@
     justify-content: flex-end;
     min-width: 1.5rem;
     color: #5c6370;
-    font-size: 12px;
+    font-size: var(--font-size, 14px);
     line-height: var(--line-height, 20px);
     text-align: right;
   }
@@ -803,14 +795,14 @@
 
   .ce-icon {
     display: none;
-    width: 14px;
+    width: var(--font-size, 14px);
     height: var(--line-height, 20px);
     flex: none;
     align-items: center;
     justify-content: center;
     background-repeat: no-repeat;
     background-position: center center;
-    background-size: 13px 13px;
+    background-size: var(--font-size, 14px) var(--font-size, 14px);
   }
 
   .ce-icon.on {
@@ -839,8 +831,8 @@
     overflow: hidden;
     background: transparent;
     color: #c5c8c6;
-    font-family: inherit;
-    font-size: 13px;
+    font-family: monospace;
+    font-size: var(--font-size, 14px);
     line-height: var(--line-height, 20px);
     letter-spacing: normal;
     word-spacing: normal;
