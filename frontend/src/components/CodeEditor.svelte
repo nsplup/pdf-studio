@@ -39,6 +39,8 @@
 
   // ---------- DOM ----------
   let textareaEl: HTMLTextAreaElement | undefined = $state();
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let mirrorEl: HTMLDivElement | undefined = $state();
 
   // ---------- 内容 ----------
   /** 逻辑行，用于镜像层渲染 */
@@ -63,6 +65,72 @@
     return m;
   });
 
+  // =====================================================================
+  // 光标可视区跟随
+  // ---------------------------------------------------------------------
+  // 镜像层里每个逻辑行 = 一个 .ce-line 元素，几何信息直接读 DOM，
+  // 因此软换行导致的「一个逻辑行占多个视觉行」也能正确处理。
+  // =====================================================================
+
+  /** 光标在视口中的矩形；依赖镜像层 DOM，必须在 DOM 更新之后调用 */
+  function caretViewportRect(): DOMRect | null {
+    const ta = textareaEl;
+    const mirror = mirrorEl;
+    if (!ta || !mirror) return null;
+
+    const caret = ta.selectionEnd;
+    const li = lineIndexAt(lastText, caret);
+    const lineEl = mirror.children[li] as HTMLElement | undefined;
+    if (!lineEl) return null;
+
+    const tn = Array.from(lineEl.childNodes).find(
+      (n): n is Text => n.nodeType === Node.TEXT_NODE,
+    );
+
+    if (tn && tn.length > 0) {
+      const col = Math.min(
+        Math.max(caret - lineStartOffset(lastText, li), 0),
+        tn.length,
+      );
+      // 取光标所在字符的矩形；行尾回退到最后一个字符
+      const from = Math.min(col, tn.length - 1);
+      const range = document.createRange();
+      range.setStart(tn, from);
+      range.setEnd(tn, from + 1);
+      const r = range.getBoundingClientRect();
+      if (r.height > 0) return r;
+    }
+
+    // 空行 / 结构异常：退化为整行
+    return lineEl.getBoundingClientRect();
+  }
+
+  /** 需要时滚动容器，使光标进入可视区 */
+  function ensureCaretVisible(pad = 8) {
+    const scroller = scrollEl;
+    if (!scroller) return;
+
+    const rect = caretViewportRect();
+    if (!rect) return;
+
+    const view = scroller.getBoundingClientRect();
+    if (rect.top < view.top + pad) {
+      scroller.scrollTop -= view.top + pad - rect.top;
+    } else if (rect.bottom > view.bottom - pad) {
+      scroller.scrollTop += rect.bottom - view.bottom + pad;
+    }
+  }
+
+  /** 合并到下一帧执行：此时 Svelte 已完成 lines → DOM 的更新 */
+  let caretScrollPending = false;
+  function scheduleCaretVisible() {
+    if (caretScrollPending) return;
+    caretScrollPending = true;
+    requestAnimationFrame(() => {
+      caretScrollPending = false;
+      ensureCaretVisible();
+    });
+  }
   // =====================================================================
   // 历史记录
   // ---------------------------------------------------------------------
@@ -195,6 +263,7 @@
     lastEditCursor = e;
     value = text;
     onchange?.(text);
+    scheduleCaretVisible();
   }
 
   // =====================================================================
@@ -654,11 +723,11 @@
 
 <div
   class="code-editor {className}"
+  bind:this={scrollEl}
   style="--tab-size: {tabSize}; --line-height: 20px;"
 >
   <div class="ce-inner">
-    <!-- 镜像层：逐逻辑行渲染，用于行高亮 / 装订线 / 软换行撑高 -->
-    <div class="ce-mirror" aria-hidden="true">
+    <div class="ce-mirror" aria-hidden="true" bind:this={mirrorEl}>
       {#each lines as line, i (i)}
         {@const lineAnns = annMap.get(i)}
         <div class="ce-line" class:has-ann={!!lineAnns?.length}>
@@ -733,8 +802,7 @@
     z-index: 1;
     /* 让文本区域的鼠标事件穿透到 textarea，仅图标重新启用 */
     pointer-events: none;
-    padding: var(--pad-y) var(--pad-right)
-      var(--pad-y) var(--gutter-w);
+    padding: var(--pad-y) var(--pad-right) var(--pad-y) var(--gutter-w);
     color: transparent;
     user-select: none;
     white-space: pre-wrap;
