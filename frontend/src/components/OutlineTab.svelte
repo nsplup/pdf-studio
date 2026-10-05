@@ -129,39 +129,54 @@
   }
 
   /** 缩进文本 -> 树；输入为视图页码（无零页：0 不存在），按规则换算回实际页码存储；缺省/非法取 1；层级由行首 TAB 数决定 */
-  function parseText(text: string): EditNode[] {
-    const root: EditNode[] = [];
-    const stack: { depth: number; node: EditNode }[] = [];
-    for (const raw of text.split("\n")) {
-      if (!raw.trim()) continue;
-      const depth = raw.length - raw.replace(/^\t+/, "").length;
-      const body = raw.slice(depth);
-      const ti = body.lastIndexOf("\t");
-      let title = body;
-      let page = 1; // 视图页码，缺省为基准区第 1 页
-      if (ti >= 0) {
-        title = body.slice(0, ti).trim() || "无标题";
-        const n = parseInt(body.slice(ti + 1), 10);
-        // 视图页码无 0 页；换算后须为合法实际页码（≥ 1）
-        const phys = fromViewPage(n, off);
-        if (phys !== null && phys >= 1) page = n;
-      } else {
-        title = body.trim() || "无标题";
+function parseText(text: string): EditNode[] {
+  const root: EditNode[] = [];
+  const stack: { depth: number; node: EditNode }[] = [];
+
+  for (const raw of text.split("\n")) {
+    if (!raw.trim()) continue;
+
+    const depth = raw.length - raw.replace(/^\t+/, "").length;
+    const body = raw.slice(depth);
+    const ti = body.lastIndexOf("\t");
+
+    let title = "";
+    let physPage: number | null = null;
+
+    if (ti >= 0) {
+      title = body.slice(0, ti).trim() || "无标题";
+      const parsedNum = parseInt(body.slice(ti + 1), 10);
+      
+      if (Number.isFinite(parsedNum)) {
+        physPage = fromViewPage(parsedNum, off); // 换算实际页码（超出范围的也会照常算出来）
       }
-      const node: EditNode = {
-        title,
-        page: fromViewPage(page, off) ?? 1,
-        expanded: true,
-        kids: [],
-      };
-      while (stack.length && stack[stack.length - 1].depth >= depth)
-        stack.pop();
-      if (stack.length) stack[stack.length - 1].node.kids.push(node);
-      else root.push(node);
-      stack.push({ depth, node });
+    } else {
+      title = body.trim() || "无标题";
+      physPage = fromViewPage(1, off);
     }
-    return root;
+
+    const node: EditNode = {
+      title,
+      page: physPage ?? 1,
+      expanded: true,
+      kids: [],
+    };
+
+    while (stack.length && stack[stack.length - 1].depth >= depth) {
+      stack.pop();
+    }
+
+    if (stack.length) {
+      stack[stack.length - 1].node.kids.push(node);
+    } else {
+      root.push(node);
+    }
+
+    stack.push({ depth, node });
   }
+
+  return root;
+}
 
   function toOutline(nodes: EditNode[]): OutlineNode[] {
     const walk = (list: EditNode[]): OutlineNode[] =>
@@ -317,29 +332,30 @@
     for (let i = 0; i < seq.length; i++) {
       const n = seq[i];
       const p = Math.round(Number(n.page));
-      // 校验始终基于实际页码；带基准偏移时在提示中附视图页码，避免对照困惑
-      const hint =
-        off > 0 && Number.isFinite(p)
-          ? `（视图显示 ${toViewPage(p, off)}）`
-          : "";
+
+      // 换算当前页码与范围上限/后续页码的显示页码
+      const viewP = Number.isFinite(p) ? toViewPage(p, off) : "无效";
+      const viewMax = toViewPage(max, off);
+
       if (!Number.isFinite(p) || p < 1 || p > max) {
         invalid.add(n);
         problems.push({
           kind: "range",
           title: n.title || "(无标题)",
           page: p,
-          detail: `页码 ${Number.isFinite(p) ? p : "无效"}${hint} 超出范围 [1, ${max}]`,
+          detail: `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`,
           order: i,
         });
         continue;
       }
       if (p > suffixMin[i + 1]) {
         invalid.add(n);
+        const viewNext = toViewPage(suffixMin[i + 1], off);
         problems.push({
           kind: "order",
           title: n.title || "(无标题)",
           page: p,
-          detail: `页码 ${p}${hint} 大于后续书签页码 ${suffixMin[i + 1]}`,
+          detail: `页码 ${viewP} 大于后续书签页码 ${viewNext}`,
           order: i,
         });
       }

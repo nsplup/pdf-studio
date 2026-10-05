@@ -964,11 +964,14 @@
                     class="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
                   />
                 {/if}
-                <div class="flex-1">
-                  <div class="flex items-center gap-2">
-                    <span class="font-medium">{p.title}</span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex min-w-0 items-center gap-2">
                     <span
-                      class="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                      class="min-w-0 truncate font-medium"
+                      title={p.title}>{p.title}</span
+                    >
+                    <span
+                      class="inline-flex w-11 shrink-0 items-center justify-center rounded-full bg-primary/15 px-1.5 py-px text-[10px] font-semibold tracking-wide text-primary"
                     >
                       {p.source === "outline" ? "书签" : "页标签"}
                     </span>

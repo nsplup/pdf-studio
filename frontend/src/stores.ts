@@ -136,9 +136,9 @@ export function toViewPage(phys: number, offset: number): number {
   return d >= 1 ? d : d - 1;
 }
 
-/** 视图页码 → 实际页码；0 不存在（无零页），返回 null 表示非法输入 */
+/** 视图页码 → 实际页码（即使 view 为非法值/超界值也照常换算，保留对应物理位置） */
 export function fromViewPage(view: number, offset: number): number | null {
-  if (!Number.isFinite(view) || view === 0) return null;
+  if (!Number.isFinite(view)) return null;
   return view >= 1 ? view + offset : view + offset + 1;
 }
 
