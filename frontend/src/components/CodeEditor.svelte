@@ -71,7 +71,7 @@
   //  * 是否合并由「时间窗口 + 编辑类型 + 光标连续性」三要素共同判定，
   //    与 CodeMirror / VS Code 的 history 扩展思路一致：
   //      - 时间窗口内（默认 500ms）
-  //      - 同一种编辑类型（insert / delete / indent / outdent / move）
+  //      - 同一种编辑类型（insert / delete / indent / outdent / move / newline）
   //      - insert/delete 时要求光标在上一次编辑结束位置附近
   //  * 粘贴、剪切、输入法组合、撤销/重做后都会断开合并链，
   //    保证每次撤销对应一个语义明确的编辑动作。
@@ -501,11 +501,34 @@
       return;
     }
 
-    // Tab：在光标处插入制表符 \t；Shift+Tab：反缩进
+    if (k === "Enter" && !mod && !ev.altKey && !composing) {
+      ev.preventDefault();
+      const ta = textareaEl;
+      if (!ta) return;
+
+      const text = lastText;
+      const s = ta.selectionStart;
+      const e = ta.selectionEnd;
+
+      const lineStart = lineStartOffset(text, lineIndexAt(text, s));
+      // 抽取当前行行首的 \t 前缀作为继承缩进
+      const prefixMatch = /^\t*/.exec(text.slice(lineStart, s));
+      const indent = ev.shiftKey ? "" : (prefixMatch?.[0] ?? "");
+
+      const inserted = "\n" + indent;
+      const newText = text.slice(0, s) + inserted + text.slice(e);
+      const newPos = s + inserted.length;
+
+      selStart = s;
+      selEnd = e;
+      pushHistoryEntry("newline", text, newPos, /* forceNew */ false);
+      applyText(newText, newPos, newPos);
+      return;
+    }
+    // Tab：在光标处插入制表符 \t
     if (k === "Tab" && !mod && !ev.altKey) {
       ev.preventDefault();
-      if (ev.shiftKey) indent(-1);
-      else insertText("\t", "tab");
+      insertText("\t", "tab");
       return;
     }
     if (mod && !ev.shiftKey && k === "]") {
