@@ -367,7 +367,7 @@
                     <!-- 行首警告列 -->
                     <div class="flex items-center justify-center">
                       {#if p}
-                        <span title={p.detail} aria-label={p.detail}>
+                        <span title={p.detail} aria-label={p.detail} style="cursor: help;">
                           <TriangleAlert class="h-3.5 w-3.5 text-amber-600" />
                         </span>
                       {/if}
