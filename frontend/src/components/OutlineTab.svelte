@@ -198,9 +198,9 @@
   function computeProblems(
     nodes: EditNode[],
     max: number,
-  ): { problems: BookmarkProblem[]; invalid: Set<EditNode> } {
+  ): { problems: BookmarkProblem[]; invalid: Map<EditNode, string> } {
     const problems: BookmarkProblem[] = [];
-    const invalid = new Set<EditNode>();
+      const invalid = new Map<EditNode, string>();
     const seq: EditNode[] = [];
     const walk = (ns: EditNode[]) => {
       for (const n of ns) {
@@ -228,24 +228,26 @@
       const viewMax = toViewPage(max, off);
 
       if (!Number.isFinite(p) || p < 1 || p > max) {
-        invalid.add(n);
+        const detail = `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`
+        invalid.set(n, detail);
         problems.push({
           kind: "range",
           title: n.title || "(无标题)",
           page: p,
-          detail: `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`,
+          detail,
           order: i,
         });
         continue;
       }
       if (p > suffixMin[i + 1]) {
-        invalid.add(n);
         const viewNext = toViewPage(suffixMin[i + 1], off);
+        const detail = `页码 ${viewP} 大于后续书签页码 ${viewNext}`
+        invalid.set(n, detail);
         problems.push({
           kind: "order",
           title: n.title || "(无标题)",
           page: p,
-          detail: `页码 ${viewP} 大于后续书签页码 ${viewNext}`,
+          detail,
           order: i,
         });
       }

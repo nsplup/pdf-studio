@@ -23,7 +23,7 @@
     node = $bindable(),
     path = [],
     depth = 0,
-    invalidSet = null as Set<EditNode> | null,
+    invalidSet = null as Map<EditNode, string> | null,
     pageOffset = 0,
     onChanged,
     onRemove,
@@ -33,7 +33,7 @@
     node: EditNode;
     path?: number[];
     depth?: number;
-    invalidSet?: Set<EditNode> | null;
+    invalidSet?: Map<EditNode, string> | null;
     pageOffset?: number;
     onChanged: () => void;
     onRemove: (path: number[]) => void;
@@ -41,7 +41,9 @@
     onInsertBelow: (path: number[]) => void;
   } = $props();
 
+  // 原来的 has() 仍然可用（Map 也有 has）
   let isInvalid = $derived(!!invalidSet && invalidSet.has(node));
+  let invalidMsg = $derived(invalidSet?.get(node) ?? "");
 
   /** 视图页码 -> 实际页码写入 node（无 0 页；非法输入不写入） */
   function setPageFromView(ev: Event) {
@@ -108,7 +110,14 @@
     {/if}
     <!-- 固定占位：有效行也保留槽位，缩进/对齐不因图标出现而变化 -->
     <span class="warn-slot" aria-hidden={!isInvalid}>
-      {#if isInvalid}<TriangleAlert class="h-3.5 w-3.5 text-amber-600" />{/if}
+      {#if isInvalid}
+        <span title={invalidMsg} style="cursor: help;">
+          <TriangleAlert
+            class="h-3.5 w-3.5 text-amber-600"
+            aria-label={invalidMsg}
+          />
+        </span>
+      {/if}
     </span>
     <input
       class="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -211,7 +220,9 @@
     flex: none;
     border-radius: 6px;
     color: rgba(0, 0, 0, 0);
-    transition: color 0.2s, background-color 0.2s;
+    transition:
+      color 0.2s,
+      background-color 0.2s;
   }
   .tree-row:hover .tree-act,
   .tree-row:focus-within .tree-act {
