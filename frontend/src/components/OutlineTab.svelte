@@ -1,10 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { OutlineService, type OutlineNode, type DocInfo } from "@bindings";
-  import ace from "ace-builds";
-  import "ace-builds/src-noconflict/mode-text";
-  import "ace-builds/src-noconflict/theme-tomorrow_night";
-  import "ace-builds/src-noconflict/ext-searchbox"; // Ctrl+F / Ctrl+H 查找替换
   import {
     currentDoc,
     notify,
@@ -18,6 +14,9 @@
   } from "../stores";
   import * as UI from "./ui";
   import TreeNode, { type EditNode } from "./TreeNode.svelte";
+  import CodeEditor, {
+    type EditorAnnotation,
+  } from "./CodeEditor.svelte";
   import {
     Trash2,
     Loader,
@@ -25,9 +24,8 @@
     Plus,
     FileQuestionMark,
     Type,
-    TriangleAlert, // 清空确认弹窗还在用
+    TriangleAlert,
   } from "lucide-svelte";
-  // 移除 ScrollText / X / CheckCircle2 / ArrowDownUp
 
   let { pageCount = null as number | null } = $props();
   let doc = $derived($currentDoc);
@@ -44,34 +42,31 @@
   let textValue = $state("");
   let touched = $state(false);
 
+  /** 文本编辑器实例 */
+  let codeEditor = $state<ReturnType<typeof CodeEditor> | undefined>();
+
   $effect(() => {
     outlineDirty.set(touched);
   });
+
   /**
    * outlines 单一事实来源：
    * - 树状编辑 → outlines 更新 → 文本渲染同步（此处序列化）；
-   * - 文本编辑 → oninput 直接更新 outlines → 树状视图随 outlines 刷新。
+   * - 文本编辑 → onchange 直接更新 outlines → 树状视图随 outlines 刷新。
    * 两个视图都只渲染 outlines，不存在独立状态与特例。
    */
   // svelte-ignore state_referenced_locally
   let lastMode = mode;
-  let lastTreeJson = "";
   let lastSyncOff = -1;
   $effect(() => {
     const m = mode;
     const o = off;
-    const snapshot = JSON.stringify(tree);
-    if (m !== lastMode || o !== lastSyncOff) {
-      lastMode = m;
-      lastSyncOff = o;
-      lastTreeJson = snapshot;
-      textValue = serialize(tree);
-      return;
-    }
-    if (m === "text" && snapshot !== lastTreeJson) {
-      lastTreeJson = snapshot;
-      textValue = serialize(tree);
-    }
+    const changed = m !== lastMode || o !== lastSyncOff;
+    lastMode = m;
+    lastSyncOff = o;
+    if (!changed) return;
+    // 进入文本模式 / 基准页变化：重新按当前树序列化
+    if (m === "text") textValue = serialize(tree);
   });
 
   $effect(() => {
@@ -129,54 +124,54 @@
   }
 
   /** 缩进文本 -> 树；输入为视图页码（无零页：0 不存在），按规则换算回实际页码存储；缺省/非法取 1；层级由行首 TAB 数决定 */
-function parseText(text: string): EditNode[] {
-  const root: EditNode[] = [];
-  const stack: { depth: number; node: EditNode }[] = [];
+  function parseText(text: string): EditNode[] {
+    const root: EditNode[] = [];
+    const stack: { depth: number; node: EditNode }[] = [];
 
-  for (const raw of text.split("\n")) {
-    if (!raw.trim()) continue;
+    for (const raw of text.split("\n")) {
+      if (!raw.trim()) continue;
 
-    const depth = raw.length - raw.replace(/^\t+/, "").length;
-    const body = raw.slice(depth);
-    const ti = body.lastIndexOf("\t");
+      const depth = raw.length - raw.replace(/^\t+/, "").length;
+      const body = raw.slice(depth);
+      const ti = body.lastIndexOf("\t");
 
-    let title = "";
-    let physPage: number | null = null;
+      let title = "";
+      let physPage: number | null = null;
 
-    if (ti >= 0) {
-      title = body.slice(0, ti).trim() || "无标题";
-      const parsedNum = parseInt(body.slice(ti + 1), 10);
-      
-      if (Number.isFinite(parsedNum)) {
-        physPage = fromViewPage(parsedNum, off); // 换算实际页码（超出范围的也会照常算出来）
+      if (ti >= 0) {
+        title = body.slice(0, ti).trim() || "无标题";
+        const parsedNum = parseInt(body.slice(ti + 1), 10);
+
+        if (Number.isFinite(parsedNum)) {
+          physPage = fromViewPage(parsedNum, off); // 换算实际页码（超出范围的也会照常算出来）
+        }
+      } else {
+        title = body.trim() || "无标题";
+        physPage = fromViewPage(1, off);
       }
-    } else {
-      title = body.trim() || "无标题";
-      physPage = fromViewPage(1, off);
+
+      const node: EditNode = {
+        title,
+        page: physPage ?? 1,
+        expanded: true,
+        kids: [],
+      };
+
+      while (stack.length && stack[stack.length - 1].depth >= depth) {
+        stack.pop();
+      }
+
+      if (stack.length) {
+        stack[stack.length - 1].node.kids.push(node);
+      } else {
+        root.push(node);
+      }
+
+      stack.push({ depth, node });
     }
 
-    const node: EditNode = {
-      title,
-      page: physPage ?? 1,
-      expanded: true,
-      kids: [],
-    };
-
-    while (stack.length && stack[stack.length - 1].depth >= depth) {
-      stack.pop();
-    }
-
-    if (stack.length) {
-      stack[stack.length - 1].node.kids.push(node);
-    } else {
-      root.push(node);
-    }
-
-    stack.push({ depth, node });
+    return root;
   }
-
-  return root;
-}
 
   function toOutline(nodes: EditNode[]): OutlineNode[] {
     const walk = (list: EditNode[]): OutlineNode[] =>
@@ -188,117 +183,12 @@ function parseText(text: string): EditNode[] {
     return walk(nodes);
   }
 
-  // ---------- Ace Editor（文本模式） ----------
-  let aceEl: HTMLDivElement | undefined = $state();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let ed = $state<any>(null);
-  /** ace → 数据 更新中，抑制外部回写 */
-  let aceLock = false;
-  let ro: ResizeObserver | null = null;
-
-  onDestroy(() => {
-    ro?.disconnect();
-    ro = null;
-    ed?.destroy();
-    ed = null;
-  });
-
-  // 进入文本模式：容器挂载后创建实例
-  $effect(() => {
-    if (mode !== "text") return; // 没进过文本模式就不建
-    if (!aceEl || ed) return; // 建过就不重建
-    ed = ace.edit(aceEl, {
-      value: textValue,
-      mode: "ace/mode/text",
-      theme: "ace/theme/tomorrow_night", // 暗色模式
-      wrap: true,
-      useSoftTabs: false,
-      showPrintMargin: false,
-      fontSize: "13px",
-      useWorker: false,
-    });
-    ro = new ResizeObserver(() => {
-      if (!ed || !aceEl) return;
-      // 容器真正可见（尺寸 > 0）才处理；display:none → 尺寸 0 → 直接跳过
-      if (aceEl.clientHeight === 0 || aceEl.clientWidth === 0) return;
-
-      // 把视图同步到当前数据（数据在隐藏期间可能已变过多次）
-      const next = serialize(tree);
-      if (ed.getValue() !== next) {
-        aceLock = true;
-        ed.setValue(next, 1);
-        aceLock = false;
-      }
-      // 尺寸从 0 变非 0，Ace 的字符度量缓存是旧的，必须强制重排 + 整屏重绘
-      ed.resize(true);
-      ed.renderer.updateFull(true);
-    });
-    ro.observe(aceEl);
-    ed.on("change", () => {
-      if (aceLock) return;
-      textValue = ed.getValue();
-      tree = parseText(textValue);
-      touched = true;
-    });
-  });
-
-  // 数据 → ace 回写（树状视图/导入/基准页切换等外部修改；内容一致或正在输入时零扰动）
-  let lastWriteOff = -1;
-  $effect(() => {
-    const o = off;
-    const offChanged = o !== lastWriteOff;
-    lastWriteOff = o;
-    if (!ed) return; // ← 只判断 ed，不判断 mode
-    const next = serialize(tree);
-
-    const invisible =
-      !aceEl || aceEl.clientHeight === 0 || aceEl.clientWidth === 0;
-    if (invisible) {
-      if (ed.getValue() !== next) {
-        aceLock = true;
-        ed.setValue(next, 1);
-        aceLock = false;
-      }
-      return;
-    }
-
-    if (!offChanged && ed.isFocused()) return;
-    if (ed.getValue() !== next) {
-      aceLock = true;
-      ed.setValue(next, 1);
-      aceLock = false;
-    }
-    if (offChanged) {
-      ed.clearSelection();
-      ed.resize(true);
-      ed.renderer.updateFull(true);
-    }
-  });
-
-  // 校验标注：直接使用 Ace Session 内置 annotations（装订线警告标记 + 行悬停提示）
-  $effect(() => {
-    const ps = problems;
-    void tree; // 显式依赖，保证 tree 变了会重算
-    if (!ed || mode !== "text") return;
-
-    // 以 Ace 实际内容为准，避免与 textValue 的批处理窗口错位
-    const tv: string = ed.getValue();
-    const nodeRows: number[] = [];
-    tv.split("\n").forEach((l, i) => {
-      if (l.trim()) nodeRows.push(i); // ← 与 parseText 的 "哪些行算节点" 完全一致
-    });
-
-    ed.session.setAnnotations(
-      ps
-        .filter((p) => p.order >= 0 && p.order < nodeRows.length)
-        .map((p) => ({
-          row: nodeRows[p.order],
-          column: 0,
-          text: p.detail,
-          type: "warning" as const,
-        })),
-    );
-  });
+  /** 文本编辑器内容变化：同步 textValue 与 tree */
+  function onEditorChange(v: string) {
+    textValue = v;
+    tree = parseText(v);
+    touched = true;
+  }
 
   /**
    * 深度优先遍历出写入序列后校验：
@@ -366,6 +256,28 @@ function parseText(text: string): EditNode[] {
   let validation = $derived(computeProblems(tree, maxPage));
   let problems = $derived(validation.problems);
   let invalidSet = $derived(validation.invalid);
+
+  /**
+   * 文本编辑器的行注解：
+   * - 逻辑行号 = 文本中「非空行」的序号（与 parseText 的节点顺序一致）；
+   * - 每条校验问题对应到它所属的那一行。
+   */
+  let codeAnnotations = $derived.by((): EditorAnnotation[] => {
+    const ps = problems;
+    void tree; // 显式依赖
+    const rows: number[] = [];
+    textValue.split("\n").forEach((l, i) => {
+      if (l.trim()) rows.push(i);
+    });
+    return ps
+      .filter((p) => p.order >= 0 && p.order < rows.length)
+      .map((p) => ({
+        row: rows[p.order],
+        column: 0,
+        text: p.detail,
+        type: "warning" as const,
+      }));
+  });
 
   // 把书签校验问题注册到全局，供 App 汇总展示
   $effect(() => {
@@ -447,7 +359,6 @@ function parseText(text: string): EditNode[] {
 
   function onChanged() {
     touched = true;
-
     tree = [...tree]; // 触发重渲染（深层变更已在代理上生效）
   }
 
@@ -481,24 +392,18 @@ function parseText(text: string): EditNode[] {
   export function markClean() {
     touched = false;
   }
+
   /** 关闭文档时清空内部状态 */
   export function reset() {
-    ro?.disconnect();
-    ro = null;
-    ed?.destroy();
-    ed = null;
-
+    codeEditor?.reset();
     loadedID = "";
     attemptedID = "";
     tree = [];
     textValue = "";
     touched = false;
     busy = false;
-    // 其他状态按需一起清（lastMode / lastTreeJson / lastSyncOff / lastWriteOff 等）
     lastMode = mode;
-    lastTreeJson = "";
     lastSyncOff = -1;
-    lastWriteOff = -1;
   }
 </script>
 
@@ -534,12 +439,19 @@ function parseText(text: string): EditNode[] {
           </div>
         {:else}
           <div style:display={mode === "text" ? "block" : "none"}>
-            <div
-              bind:this={aceEl}
-              class="ace-shell h-[calc(100vh-314px)] w-full overflow-hidden rounded-md border border-input"
-            ></div>
+            <CodeEditor
+              bind:this={codeEditor}
+              bind:value={textValue}
+              annotations={codeAnnotations}
+              onchange={onEditorChange}
+              class="h-[calc(100vh-314px)] w-full overflow-hidden rounded-md border border-input"
+            />
             <p class="mt-2 text-xs text-muted-foreground">
-              每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点
+              每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点。
+              <span class="whitespace-nowrap"
+                >Tab / Ctrl+] 缩进，Ctrl+[ 反缩进，Alt+↑↓ 移动行，Ctrl+Z
+                撤销。</span
+              >
             </p>
           </div>
 
@@ -644,145 +556,6 @@ function parseText(text: string): EditNode[] {
     flex-direction: column;
     gap: 2px;
   }
-  /* Ace 编辑器容器：暗色主题 + 等宽字体 + 圆角裁切 */
-  .ace-shell :global(.ace_editor) {
-    font-family: var(
-      --font-mono,
-      ui-monospace,
-      SFMono-Regular,
-      Menlo,
-      monospace
-    ) !important;
-    border-radius: 0 0 5px 5px;
-  }
-
-  /* 滚动条：与外部滚动条（app.css ::-webkit-scrollbar）保持一致的观感 */
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar) {
-    width: 5px;
-    height: 5px;
-  }
-
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-track),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-track) {
-    background: transparent;
-    border: none;
-  }
-
-  /* 滑块：去掉描边，避免 hover 时“内部高亮、外圈留底”的割裂感 */
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb) {
-    background: rgba(150, 152, 150, 0.28); /* #969896，tomorrow_night 注释灰 */
-    border: none;
-    border-radius: 5px;
-    background-clip: padding-box;
-  }
-
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb:hover),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb:hover) {
-    background: rgba(150, 152, 150, 0.48); /* 整块变亮，而不是局部 */
-  }
-
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-thumb:active),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-thumb:active) {
-    background: rgba(150, 152, 150, 0.62);
-  }
-
-  /* 去掉 WebKit 默认的角落补丁背景，避免右下出现浅色方块 */
-  .ace-shell :global(.ace_scrollbar-v::-webkit-scrollbar-corner),
-  .ace-shell :global(.ace_scrollbar-h::-webkit-scrollbar-corner) {
-    background: transparent;
-  }
-
-  /* 警告图标：替换为高清 SVG（lucide triangle-alert） */
-  .ace-shell :global(.ace_gutter-cell.ace_warning),
-  .ace-shell :global(.ace_icon.ace_warning),
-  .ace-shell :global(.ace_icon.ace_warning_fold) {
-    background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCcgZmlsbD0nbm9uZScgc3Ryb2tlPScjZjU5ZTBiJyBzdHJva2Utd2lkdGg9JzInIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCc+PHBhdGggZD0nbTIxLjczIDE4LTgtMTRhMiAyIDAgMCAwLTMuNDggMGwtOCAxNEEyIDIgMCAwIDAgNCAyMWgxNmEyIDIgMCAwIDAgMS43My0zJy8+PHBhdGggZD0nTTEyIDl2NCcvPjxwYXRoIGQ9J00xMiAxN2guMDEnLz48L3N2Zz4=") !important;
-    background-size: 13px 13px;
-    background-position: 2px center;
-    background-repeat: no-repeat;
-  }
-  /* tooltip 内部的警告图标：脱离装订线的 2px 偏移，改为居中并垂直对齐文字 */
-  :global(.ace_tooltip .ace_warning.ace_icon),
-  :global(.ace_tooltip .ace_icon.ace_warning),
-  :global(.ace_tooltip .ace_icon.ace_warning_fold) {
-    display: inline-block !important;
-    width: 14px !important;
-    height: 14px !important;
-    background-size: 14px 14px !important;
-    background-position: center center !important;
-    background-repeat: no-repeat !important;
-    vertical-align: -1px !important; /* 微调基线对齐；偏上就改 -3px，偏下就改 -1px */
-    margin: 0 4px 0 0 !important;
-  }
-
-  /* ========== 查找/替换面板：暗色底 + 只改按钮颜色 ========== */
-
-  /* 面板容器 */
-  .ace-shell :global(.ace_search) {
-    background: #1d1f21 !important;
-    border: 1px solid #3a3d3e !important;
-    border-top: none !important;
-    color: #c5c8c6 !important;
-  }
-
-  /* 输入框（查找 / 替换） */
-  .ace-shell :global(.ace_search_field),
-  .ace-shell :global(.ace_replace_field) {
-    background: #14161a !important;
-    border: 1px solid #3a3d3e !important;
-    color: #c5c8c6 !important;
-  }
-  .ace-shell :global(.ace_search_field:focus),
-  .ace-shell :global(.ace_replace_field:focus) {
-    border-color: #81a2be !important;
-  }
-  .ace-shell :global(.ace_search_field::placeholder),
-  .ace-shell :global(.ace_replace_field::placeholder) {
-    color: #6b6f73 !important;
-  }
-
-  /* 箭头 < >、All / Replace、底部 - .* Aa \b S：只改颜色，其余不动 */
-  .ace-shell :global(.ace_searchbtn),
-  .ace-shell :global(.ace_replacebtn),
-  .ace-shell :global(.ace_button) {
-    background-color: #2d2f31 !important;
-    border-color: #3a3d3e !important;
-    color: #c5c8c6 !important;
-  }
-  /* 悬停：仅对未选中的按钮生效 */
-  .ace-shell :global(.ace_searchbtn:hover),
-  .ace-shell :global(.ace_replacebtn:hover),
-  .ace-shell :global(.ace_button:hover:not(.checked)) {
-    background-color: #3a3d3e !important;
-    color: #e8e8e8 !important;
-  }
-
-  /* 选中态：用 checked */
-  .ace-shell :global(.ace_button.checked),
-  .ace-shell :global(.ace_search .ace_button.checked) {
-    background-color: #81a2be !important;
-    color: #1d1f21 !important;
-    border-color: #81a2be !important;
-  }
-
-  /* 计数文字 */
-  .ace-shell :global(.ace_search_counter) {
-    color: #969896 !important;
-  }
-
-  /* 关闭按钮：唯一保留“换图标”的地方（位图 → 高清 SVG） */
-  .ace-shell :global(.ace_searchbtn_close) {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c5c8c6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6 6 18'/%3E%3Cpath d='m6 6 12 12'/%3E%3C/svg%3E") !important;
-    background-position: center !important;
-    background-size: 12px 12px !important;
-    background-repeat: no-repeat !important;
-  }
-  .ace-shell :global(.ace_search_form.ace_nomatch) {
-    border-radius: 3px !important;
-  }
-
   .log-overlay {
     position: fixed;
     inset: 0;
