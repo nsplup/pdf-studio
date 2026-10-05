@@ -707,7 +707,7 @@
     --gutter-w: 3.5rem;
     --text-gap: 12px;
     /* 文本区域垂直基线微调：镜像层相对 textarea 上移，修正几像素错位 */
-    --baseline-nudge: 2px;
+    --baseline-nudge: 2.5px;
 
     position: relative;
     overflow-y: auto;
