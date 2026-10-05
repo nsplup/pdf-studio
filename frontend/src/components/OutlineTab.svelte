@@ -14,9 +14,7 @@
   } from "../stores";
   import * as UI from "./ui";
   import TreeNode, { type EditNode } from "./TreeNode.svelte";
-  import CodeEditor, {
-    type EditorAnnotation,
-  } from "./CodeEditor.svelte";
+  import CodeEditor, { type EditorAnnotation } from "./CodeEditor.svelte";
   import {
     Trash2,
     Loader,
@@ -200,7 +198,7 @@
     max: number,
   ): { problems: BookmarkProblem[]; invalid: Map<EditNode, string> } {
     const problems: BookmarkProblem[] = [];
-      const invalid = new Map<EditNode, string>();
+    const invalid = new Map<EditNode, string>();
     const seq: EditNode[] = [];
     const walk = (ns: EditNode[]) => {
       for (const n of ns) {
@@ -228,7 +226,7 @@
       const viewMax = toViewPage(max, off);
 
       if (!Number.isFinite(p) || p < 1 || p > max) {
-        const detail = `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`
+        const detail = `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`;
         invalid.set(n, detail);
         problems.push({
           kind: "range",
@@ -241,7 +239,7 @@
       }
       if (p > suffixMin[i + 1]) {
         const viewNext = toViewPage(suffixMin[i + 1], off);
-        const detail = `页码 ${viewP} 大于后续书签页码 ${viewNext}`
+        const detail = `页码 ${viewP} 大于后续书签页码 ${viewNext}`;
         invalid.set(n, detail);
         problems.push({
           kind: "order",
@@ -451,8 +449,8 @@
             <p class="mt-2 text-xs text-muted-foreground">
               每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点。
               <span class="whitespace-nowrap"
-                >Tab / Ctrl+] 缩进，Ctrl+[ 反缩进，Alt+↑↓ 移动行，Ctrl+Z
-                撤销。</span
+                >Tab / Ctrl+] 缩进；Ctrl+[ 反缩进；Alt+↑ / ↓
+                移动行；Ctrl+Z撤销。</span
               >
             </p>
           </div>
