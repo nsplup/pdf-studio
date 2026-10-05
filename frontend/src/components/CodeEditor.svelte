@@ -133,7 +133,10 @@
 
     // indent / outdent / move 属于整块操作，不做光标连续性要求
     const needsContiguity = kind === "insert" || kind === "delete";
-    if (needsContiguity && Math.abs(cursorAfter - lastEditCursor) > CURSOR_SLACK) {
+    if (
+      needsContiguity &&
+      Math.abs(cursorAfter - lastEditCursor) > CURSOR_SLACK
+    ) {
       return false;
     }
     return true;
@@ -362,6 +365,105 @@
     }
   }
 
+  // =====================================================================
+  // 通用插入 / 剪切当前行
+  // =====================================================================
+
+  /**
+   * 在光标处插入文本（若有选区则替换选区）。
+   * @param kind 历史记录中的编辑类型，默认 "insert"
+   */
+  function insertText(txt: string, kind = "insert") {
+    const ta = textareaEl;
+    if (!ta) return;
+
+    const text = lastText;
+    const s = ta.selectionStart;
+    const e = ta.selectionEnd;
+    if (s === e && txt.length === 0) return;
+
+    const newText = text.slice(0, s) + txt + text.slice(e);
+    const caret = s + txt.length;
+
+    // 记录「编辑前」的选区
+    selStart = s;
+    selEnd = e;
+    // forceNew：每次 Tab 都是独立的撤销点，不与其后的输入合并
+    pushHistoryEntry(kind, text, caret, true);
+
+    applyText(newText, caret, caret);
+  }
+
+  /** 复制文本到剪贴板（带降级方案） */
+  function copyToClipboard(text: string) {
+    const clip = navigator.clipboard;
+    if (clip?.writeText) {
+      clip.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text: string) {
+    const tmp = document.createElement("textarea");
+    tmp.value = text;
+    tmp.setAttribute("readonly", "");
+    tmp.style.position = "fixed";
+    tmp.style.top = "-1000px";
+    tmp.style.opacity = "0";
+    document.body.appendChild(tmp);
+    tmp.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      /* 忽略：复制失败不影响后续删除 */
+    }
+    document.body.removeChild(tmp);
+    textareaEl?.focus();
+  }
+
+  /** 剪切当前行：复制该行到剪贴板，并将其从文本中删除 */
+  function cutCurrentLine() {
+    const ta = textareaEl;
+    if (!ta) return;
+
+    const text = lastText;
+    const pos = ta.selectionStart;
+    const arr = text.split("\n");
+    const li = lineIndexAt(text, pos);
+    if (li < 0 || li >= arr.length) return;
+
+    const lineText = arr[li];
+    const lineStart = offsetOfLines(arr, li);
+
+    let newText: string;
+    let caret: number;
+
+    if (arr.length === 1) {
+      // 只剩一行：直接清空
+      newText = "";
+      caret = 0;
+    } else if (li < arr.length - 1) {
+      // 非末行：连同其后的换行一起删除
+      newText =
+        text.slice(0, lineStart) + text.slice(lineStart + lineText.length + 1);
+      caret = lineStart;
+    } else {
+      // 末行：连同其前的换行一起删除
+      newText = text.slice(0, lineStart - 1);
+      caret = lineStart - 1;
+    }
+
+    // 写入剪贴板：带上换行符，粘贴回去可还原为完整一行
+    copyToClipboard(lineText + "\n");
+
+    selStart = pos;
+    selEnd = pos;
+    pushHistoryEntry("cutline", text, caret, true);
+
+    applyText(newText, caret, caret);
+  }
+
   function onKeydown(ev: KeyboardEvent) {
     if (readonly) return;
 
@@ -388,10 +490,22 @@
       return;
     }
 
-    // 缩进 / 反缩进
+    // Ctrl/Cmd+X：无选区时剪切「当前行」；有选区时保留浏览器默认剪切
+    if (mod && !ev.shiftKey && !ev.altKey && k.toLowerCase() === "x") {
+      const ta = textareaEl;
+      if (ta && ta.selectionStart === ta.selectionEnd) {
+        ev.preventDefault();
+        cutCurrentLine();
+        return;
+      }
+      return;
+    }
+
+    // Tab：在光标处插入制表符 \t；Shift+Tab：反缩进
     if (k === "Tab" && !mod && !ev.altKey) {
       ev.preventDefault();
-      indent(ev.shiftKey ? -1 : 1);
+      if (ev.shiftKey) indent(-1);
+      else insertText("\t", "tab");
       return;
     }
     if (mod && !ev.shiftKey && k === "]") {

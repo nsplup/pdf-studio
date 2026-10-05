@@ -488,10 +488,6 @@
             />
             <p class="mt-2 text-xs text-muted-foreground">
               每行一个节点，标题与页码使用制表符分隔；行首使用制表符缩进表示子节点。
-              <span class="whitespace-nowrap"
-                >Tab / Ctrl+] 缩进；Ctrl+[ 反缩进；Alt+↑ / ↓
-                移动行；Ctrl+Z撤销。</span
-              >
             </p>
           </div>
 
