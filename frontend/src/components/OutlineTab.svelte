@@ -101,6 +101,7 @@
     return nodes.map((n) => ({
       title: n.title,
       page: n.page,
+      pageRaw: "", // 未编辑过，交给 serialize 时按 toViewPage 计算
       expanded: true,
       kids: n.kids ? toEdit(n.kids) : [],
     }));
@@ -111,9 +112,15 @@
     const lines: string[] = [];
     const walk = (list: EditNode[], depth: number) => {
       for (const n of list) {
-        lines.push(
-          "\t".repeat(depth) + `${n.title}\t${toViewPage(n.page, off)}`,
-        );
+        let pageStr: string;
+        if (n.pageRaw) {
+          pageStr = n.pageRaw; // 保留用户原文（含非法值）
+        } else if (Number.isFinite(n.page)) {
+          pageStr = String(toViewPage(n.page, off));
+        } else {
+          pageStr = ""; // 无页码
+        }
+        lines.push("\t".repeat(depth) + `${n.title}\t${pageStr}`);
         walk(n.kids ?? [], depth + 1);
       }
     };
@@ -134,23 +141,27 @@
       const ti = body.lastIndexOf("\t");
 
       let title = "";
-      let physPage: number | null = null;
+      let pageRaw = "";
+      let physPage = NaN; // 默认非法
 
       if (ti >= 0) {
         title = body.slice(0, ti).trim() || "无标题";
-        const parsedNum = parseInt(body.slice(ti + 1), 10);
-
+        pageRaw = body.slice(ti + 1).trim();
+        const parsedNum = parseInt(pageRaw, 10);
         if (Number.isFinite(parsedNum)) {
-          physPage = fromViewPage(parsedNum, off); // 换算实际页码（超出范围的也会照常算出来）
+          const p = fromViewPage(parsedNum, off);
+          if (p !== null) physPage = p;
         }
+        // 解析失败 → 保留 pageRaw，page 保持 NaN
       } else {
         title = body.trim() || "无标题";
-        physPage = fromViewPage(1, off);
+        // 没有 TAB 分隔 → 无页码，保持 NaN 与空 pageRaw
       }
 
       const node: EditNode = {
         title,
-        page: physPage ?? 1,
+        page: physPage,
+        pageRaw,
         expanded: true,
         kids: [],
       };
@@ -158,13 +169,11 @@
       while (stack.length && stack[stack.length - 1].depth >= depth) {
         stack.pop();
       }
-
       if (stack.length) {
         stack[stack.length - 1].node.kids.push(node);
       } else {
         root.push(node);
       }
-
       stack.push({ depth, node });
     }
 
@@ -175,7 +184,8 @@
     const walk = (list: EditNode[]): OutlineNode[] =>
       list.map((n) => ({
         title: n.title,
-        page: Math.max(1, n.page),
+        // NaN 兜底为 1，避免写入 NaN 让 pdfcpu 报错（正常情况下 computeProblems 会先拦下来）
+        page: Number.isFinite(n.page) ? Math.max(1, n.page) : 1,
         kids: n.kids?.length ? walk(n.kids) : undefined,
       }));
     return walk(nodes);
@@ -207,26 +217,48 @@
       }
     };
     walk(nodes);
-    // suffixMin[i] = seq[i..] 中合法页码的最小值（「大于后续任意一项」判定）
+
+    // suffixMin[i] = seq[i..] 中「合法且范围内」页码的最小值。
+    // 非法（NaN）与越界页码都记为 +∞，因此它们既不会成为比较基准，
+    // 也不会把后续的判定误伤。
     const suffixMin: number[] = new Array(seq.length + 1).fill(
       Number.POSITIVE_INFINITY,
     );
     for (let i = seq.length - 1; i >= 0; i--) {
-      const p = Math.round(Number(seq[i].page));
+      const p = Number(seq[i].page);
       const valid =
         Number.isFinite(p) && p >= 1 && p <= max ? p : Number.POSITIVE_INFINITY;
       suffixMin[i] = Math.min(valid, suffixMin[i + 1]);
     }
+
+    const viewMin = toViewPage(1, off);
+    const viewMax = toViewPage(max, off);
+
     for (let i = 0; i < seq.length; i++) {
       const n = seq[i];
-      const p = Math.round(Number(n.page));
+      const rawNum = Number(n.page);
 
-      // 换算当前页码与范围上限/后续页码的显示页码
-      const viewP = Number.isFinite(p) ? toViewPage(p, off) : "无效";
-      const viewMax = toViewPage(max, off);
+      // 情况 A：页码非法（NaN / 非数字）→ 单独报错，不参与范围/逆序比较
+      if (!Number.isFinite(rawNum)) {
+        const shown = n.pageRaw ? `"${n.pageRaw}"` : "（空）";
+        const detail = `页码${shown}无效，应为 ${viewMin}–${viewMax} 之间的整数`;
+        invalid.set(n, detail);
+        problems.push({
+          kind: "range",
+          title: n.title || "(无标题)",
+          page: rawNum, // NaN
+          detail,
+          order: i,
+        });
+        continue;
+      }
 
-      if (!Number.isFinite(p) || p < 1 || p > max) {
-        const detail = `页码 ${viewP} 超出有效范围 [${toViewPage(1, off)}, ${viewMax}]`;
+      const p = Math.round(rawNum);
+      const viewP = toViewPage(p, off);
+
+      // 情况 B：越界
+      if (p < 1 || p > max) {
+        const detail = `页码 ${viewP} 超出有效范围 [${viewMin}, ${viewMax}]`;
         invalid.set(n, detail);
         problems.push({
           kind: "range",
@@ -237,6 +269,8 @@
         });
         continue;
       }
+
+      // 情况 C：逆序（此时 suffixMin[i+1] 一定来自合法节点）
       if (p > suffixMin[i + 1]) {
         const viewNext = toViewPage(suffixMin[i + 1], off);
         const detail = `页码 ${viewP} 大于后续书签页码 ${viewNext}`;
@@ -250,6 +284,7 @@
         });
       }
     }
+
     return { problems, invalid };
   }
 
@@ -336,7 +371,10 @@
   /** 根级添加书签 */
   function addRoot() {
     touched = true;
-    tree = [...tree, { title: "新书签", page: 1, expanded: true, kids: [] }];
+    tree = [
+      ...tree,
+      { title: "新书签", page: 1, pageRaw: "", expanded: true, kids: [] },
+    ];
   }
 
   /** 按路径删除节点（TreeNode 回调） */
@@ -372,10 +410,12 @@
       list = next;
     }
     const idx = path[path.length - 1];
-    const refPage = list[idx]?.page ?? 1;
+    const ref = list[idx];
+    const refPage = ref && Number.isFinite(ref.page) ? ref.page : 1;
     list.splice(idx + offset, 0, {
       title: "新书签",
       page: refPage,
+      pageRaw: "",
       expanded: true,
       kids: [],
     });

@@ -14,7 +14,8 @@
 
   export interface EditNode {
     title: string;
-    page: number;
+    page: number; // NaN 表示非法/未填写
+    pageRaw: string; // 文本模式保留的原始字符串（视图页码原文）
     kids: EditNode[];
     expanded: boolean;
   }
@@ -45,42 +46,55 @@
   let isInvalid = $derived(!!invalidSet && invalidSet.has(node));
   let invalidMsg = $derived(invalidSet?.get(node) ?? "");
 
-  /** 视图页码 -> 实际页码写入 node（无 0 页；非法输入不写入） */
+  /** 视图页码 -> 实际页码写入 node；非法输入写入 NaN，并保留原文 */
   function setPageFromView(ev: Event) {
-    const phys = fromViewPage(
-      parseInt((ev.currentTarget as HTMLInputElement).value, 10),
-      pageOffset,
-    );
-    if (phys !== null) {
-      node.page = Math.max(1, phys);
-      onChanged();
-    }
-  }
-
-  /** 失焦提交：空 / 非法输入回退到当前实际页码；合法输入回写规范化后的视图页码 */
-  function onPageBlur(ev: FocusEvent) {
     const el = ev.currentTarget as HTMLInputElement;
     const raw = el.value.trim();
-    const view = parseInt(raw, 10);
 
-    if (raw === "" || !Number.isFinite(view)) {
-      el.value = String(toViewPage(node.page, pageOffset));
+    if (raw === "") {
+      node.page = NaN;
+      node.pageRaw = "";
+      onChanged();
       return;
     }
 
-    // 处理 5.5 → 5、越界 → 边界之类的规范化
+    const view = Number(raw);
+    // 必须是有限整数才算合法视图页码
+    if (!Number.isFinite(view) || !Number.isInteger(view)) {
+      node.page = NaN;
+      node.pageRaw = raw;
+      onChanged();
+      return;
+    }
+
     const phys = fromViewPage(view, pageOffset);
-    if (phys === null || phys < 1) {
-      el.value = String(toViewPage(node.page, pageOffset));
+    if (phys === null) {
+      node.page = NaN;
+      node.pageRaw = raw;
     } else {
-      el.value = String(toViewPage(phys, pageOffset));
+      node.page = Math.max(1, phys);
+      node.pageRaw = raw;
+    }
+    onChanged();
+  }
+
+  /** 失焦：合法则规范化显示；非法则清空（同时丢掉原文） */
+  function onPageBlur(ev: FocusEvent) {
+    const el = ev.currentTarget as HTMLInputElement;
+    if (Number.isFinite(node.page)) {
+      node.pageRaw = String(toViewPage(node.page, pageOffset));
+      el.value = node.pageRaw;
+    } else {
+      node.pageRaw = "";
+      el.value = "";
     }
   }
 
   function addChild() {
     node.kids.push({
       title: "新书签",
-      page: node.page,
+      page: Number.isFinite(node.page) ? node.page : 1,
+      pageRaw: "",
       kids: [],
       expanded: true,
     });
@@ -137,7 +151,9 @@
       min={-pageOffset}
       title={pageOffset ? `视图页码` : undefined}
       class="h-7 w-16 shrink-0 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      value={toViewPage(node.page, pageOffset)}
+      value={Number.isFinite(node.page)
+        ? node.pageRaw || String(toViewPage(node.page, pageOffset))
+        : ""}
       oninput={setPageFromView}
       onblur={onPageBlur}
     />
