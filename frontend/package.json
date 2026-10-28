@@ -10,11 +10,11 @@
     "build:dev": "vite build --minify false --mode development"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tsconfig/svelte": "^5.0.4",
-    "svelte": "^5.19.0",
+    "svelte": "^5.57.3",
     "typescript": "^5.7.3",
-    "vite": "^6.0.11"
+    "vite": "^8.3.5"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.13",
