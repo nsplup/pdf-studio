@@ -21,7 +21,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@bindings': path.resolve(__dirname, 'bindings/pdfstudio/internal/service'),
+      '@bindings': path.resolve(import.meta.dirname, 'bindings/pdfstudio/internal/service'),
     },
   },
 });
